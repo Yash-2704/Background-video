@@ -1,0 +1,725 @@
+"""
+core/post_processor.py
+──────────────────────
+Post-Processing Pipeline for the Background Video Generation Module.
+
+Responsibilities (strict order — never reorder):
+  1. upscale_clip()         — raw loop → 1080p upscaled source
+  2. generate_anchor_mask() — static PNG mask per anchor position
+  3. assess_content_risk()  — photometric risk assessment per position
+  4. apply_lut_grade()      — named LUT grade applied to upscaled source
+  5. composite_final()      — mask + graded source → broadcast composite
+  6. export_preview()       — three-segment GIF preview + manifest JSON
+
+Design contract:
+  raw_loop_path is read-only. All pipeline steps read from the upscaled
+  output or other step outputs — never write back to raw.
+  Processing order is a contract: upscale → mask → risk → LUT →
+  composite → preview. Never composite from graded source directly;
+  the mask is generated from the upscaled source and then applied
+  to the graded variant.
+
+Dry-run mode (dry_run=True):
+  cv2 + numpy produce syntactically valid output files.
+  No FFmpeg filter chains, no Real-ESRGAN binary calls.
+  All outputs are valid files openable by cv2 or readable as JSON.
+
+Live mode (dry_run=False):
+  TODO blocks with NotImplementedError for upscale (Real-ESRGAN),
+  LUT grade (FFmpeg lut3d), composite (FFmpeg overlay), and preview
+  (FFmpeg palette + palettegen GIF export).
+"""
+
+import json
+import shutil
+import tempfile
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+# ── Config loading ──────────────────────────────────────────────────────────────
+PROJECT_ROOT  = Path(__file__).resolve().parent.parent
+_CONFIG_PATH  = PROJECT_ROOT / "config" / "generation_constants.json"
+
+with _CONFIG_PATH.open("r", encoding="utf-8") as _fh:
+    GENERATION_CONSTANTS: dict = json.load(_fh)
+
+# ── Module-level constants (all sourced from GENERATION_CONSTANTS) ──────────────
+UPSCALE_TARGET    = GENERATION_CONSTANTS["upscale_target"]       # [1920, 1080]
+ANCHOR_ZONE       = GENERATION_CONSTANTS["anchor_zone"]          # {x, y, w, h}
+ANCHOR_FEATHER_PX = GENERATION_CONSTANTS["anchor_feather_px"]    # 24
+LUM_REDUCTION     = GENERATION_CONSTANTS["luminance_reduction"]  # 0.22
+TARGET_FPS        = GENERATION_CONSTANTS["target_fps"]           # 30
+LUT_OPTIONS       = GENERATION_CONSTANTS["lut_options"]          # {display: internal}
+LUT_ALWAYS        = GENERATION_CONSTANTS["lut_always_generate"]  # ["neutral"]
+ANCHOR_POSITIONS  = ["center", "lower_third", "upper_third"]
+
+# ── Anchor position zone definitions ───────────────────────────────────────────
+# "center" is sourced directly from ANCHOR_ZONE in GENERATION_CONSTANTS.
+# "lower_third" and "upper_third" are positional broadcast layout constants
+# defined by the display spec — they are not generation parameters and are
+# not present in generation_constants.json.
+_ANCHOR_ZONE_DEFS: dict = {
+    "center": {
+        "x": ANCHOR_ZONE["x"],   # 0.25
+        "y": ANCHOR_ZONE["y"],   # 0.35
+        "w": ANCHOR_ZONE["w"],   # 0.50
+        "h": ANCHOR_ZONE["h"],   # 0.55
+    },
+    "lower_third": {"x": 0.0, "y": 0.65, "w": 1.0, "h": 0.35},
+    "upper_third": {"x": 0.0, "y": 0.0,  "w": 1.0, "h": 0.20},
+}
+
+
+# ── upscale_clip() ──────────────────────────────────────────────────────────────
+
+def upscale_clip(
+    input_path:   Path,
+    output_path:  Path,
+    decode_probe: dict,
+    dry_run:      bool = False,
+) -> Path:
+    """
+    Upscale the raw loop from generate_resolution to upscale_target.
+    Calibrated to the decode probe's mean_luminance.
+
+    dry_run=True  → cv2 LANCZOS4 resize with probe-calibrated luminance.
+    dry_run=False → Real-ESRGAN-Video (not yet implemented).
+    """
+    if dry_run:
+        target_w, target_h = UPSCALE_TARGET[0], UPSCALE_TARGET[1]
+
+        # Luminance calibration factor: normalize to the photometric reference (0.46)
+        mean_lum = decode_probe.get("mean_luminance", 0.46)
+        if mean_lum <= 0:
+            mean_lum = 0.46
+        lum_factor = float(np.clip(0.46 / mean_lum, 0.5, 2.0))
+
+        cap = cv2.VideoCapture(str(input_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"upscale_clip: cv2 cannot open input: {input_path}")
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(
+            str(output_path), fourcc, float(TARGET_FPS), (target_w, target_h)
+        )
+        if not writer.isOpened():
+            cap.release()
+            raise RuntimeError(f"upscale_clip: cv2.VideoWriter failed: {output_path}")
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+            calibrated = np.clip(resized.astype(np.float32) * lum_factor, 0, 255).astype(np.uint8)
+            writer.write(calibrated)
+
+        cap.release()
+        writer.release()
+        return output_path
+
+    else:
+        # TODO: LIVE UPSCALE — Real-ESRGAN-Video call
+        # Required binary: realesr-general-wdn-x4v3 (Real-ESRGAN v3 model)
+        # Target resolution: UPSCALE_TARGET = [1920, 1080]
+        # Command pattern:
+        #   realesrgan-ncnn-vulkan -i {input_path} -o {output_path}
+        #     -n realesr-general-wdn-x4v3 -s 4
+        #   then crop/pad to exact UPSCALE_TARGET dimensions via FFmpeg
+        # Luminance calibration post-upscale:
+        #   FFmpeg eq filter: eq=brightness={lum_factor - 1.0}
+        # Set dry_run=True to use cv2-based placeholder upscale.
+        raise NotImplementedError(
+            "Live upscale not yet implemented. "
+            "Requires realesr-general-wdn-x4v3 binary (Real-ESRGAN). "
+            "Set dry_run=True to use cv2 LANCZOS4 placeholder upscale."
+        )
+
+
+# ── generate_anchor_mask() ──────────────────────────────────────────────────────
+
+def generate_anchor_mask(
+    position:    str,
+    output_path: Path,
+    frame_size:  tuple,   # (width, height)
+    dry_run:     bool = False,
+) -> Path:
+    """
+    Generate a static grayscale PNG mask for the given anchor position.
+    The mask darkens the anchor zone by LUM_REDUCTION (0.22), feathered
+    at edges by ANCHOR_FEATHER_PX (24 pixels).
+
+    Mask pixel values: 255 = full brightness, 0 = fully black.
+    Zone pixels are set to (1.0 - LUM_REDUCTION) * 255 ≈ 199 at defaults.
+    """
+    zone = _ANCHOR_ZONE_DEFS[position]
+    width, height = frame_size[0], frame_size[1]
+
+    x_frac = zone["x"]
+    y_frac = zone["y"]
+    w_frac = zone["w"]
+    h_frac = zone["h"]
+
+    # Step 1: float32 mask of ones
+    mask = np.ones((height, width), dtype=np.float32)
+
+    # Step 2: pixel coordinates from fractional position
+    x1 = int(x_frac * width)
+    y1 = int(y_frac * height)
+    x2 = int((x_frac + w_frac) * width)
+    y2 = int((y_frac + h_frac) * height)
+
+    # Clamp to valid range
+    x1 = max(0, min(x1, width))
+    y1 = max(0, min(y1, height))
+    x2 = max(0, min(x2, width))
+    y2 = max(0, min(y2, height))
+
+    # Step 3: darken zone
+    mask[y1:y2, x1:x2] = 1.0 - LUM_REDUCTION  # 0.78 at default
+
+    # Step 4: Gaussian feather to soften zone boundary
+    ksize = ANCHOR_FEATHER_PX * 2 + 1          # must be odd; 49 at default
+    sigma = ANCHOR_FEATHER_PX / 2.0            # 12.0 at default
+    mask = cv2.GaussianBlur(mask, (ksize, ksize), sigma)
+
+    # Step 5: scale to uint8 (0–255)
+    mask_u8 = (mask * 255).astype(np.uint8)
+
+    # Step 6: write PNG
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(output_path), mask_u8)
+
+    return output_path
+
+
+# ── assess_content_risk() ───────────────────────────────────────────────────────
+
+def assess_content_risk(
+    mask_path:     Path,
+    upscaled_path: Path,
+    position:      str,
+    dry_run:       bool = False,
+) -> dict:
+    """
+    Assess placement risk at the given anchor position.
+    Dev-phase behavior: log only — does not block the pipeline.
+    Returns a structured risk dict.
+    """
+    _PRODUCTION_NOTE = "block_bundle_completion_until_reviewed"
+
+    if dry_run:
+        _synthetic = {
+            "center": {
+                "luminance_variance_at_zone": 0.09,
+                "edge_density_at_boundary":   "low",
+                "bright_intrusion_risk":      "none",
+                "flag":                       "clear",
+                "dev_phase_behavior":         "log_only",
+                "production_behavior_planned": _PRODUCTION_NOTE,
+            },
+            "lower_third": {
+                "luminance_variance_at_zone": 0.21,
+                "edge_density_at_boundary":   "medium",
+                "bright_intrusion_risk":      "low",
+                "flag":                       "review_recommended",
+                "dev_phase_behavior":         "log_only",
+                "production_behavior_planned": _PRODUCTION_NOTE,
+            },
+            "upper_third": {
+                "luminance_variance_at_zone": 0.11,
+                "edge_density_at_boundary":   "low",
+                "bright_intrusion_risk":      "none",
+                "flag":                       "clear",
+                "dev_phase_behavior":         "log_only",
+                "production_behavior_planned": _PRODUCTION_NOTE,
+            },
+        }
+        return _synthetic[position]
+
+    # ── Live risk assessment ────────────────────────────────────────────────────
+    # Read first frame of upscaled source
+    cap = cv2.VideoCapture(str(upscaled_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"assess_content_risk: cannot open upscaled: {upscaled_path}")
+    ret, frame = cap.read()
+    cap.release()
+    if not ret or frame is None:
+        raise RuntimeError(f"assess_content_risk: no frames in upscaled: {upscaled_path}")
+
+    # Read mask as grayscale
+    mask_gray = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    if mask_gray is None:
+        raise RuntimeError(f"assess_content_risk: cannot read mask: {mask_path}")
+
+    # Resize mask to frame dimensions if needed
+    fh, fw = frame.shape[:2]
+    if mask_gray.shape != (fh, fw):
+        mask_gray = cv2.resize(mask_gray, (fw, fh), interpolation=cv2.INTER_AREA)
+
+    # Identify masked zone pixels (where mask < 200 = darkened region)
+    zone_pixels_mask = mask_gray < 200
+    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    zone_vals = frame_gray[zone_pixels_mask].astype(np.float32)
+    zone_pixel_count = max(len(zone_vals), 1)
+
+    # Luminance variance at zone
+    luminance_variance_at_zone = float(np.var(zone_vals / 255.0)) if len(zone_vals) > 0 else 0.0
+
+    # Edge density at boundary — run Canny on the zone region
+    zone_frame = frame_gray.copy()
+    zone_mask_u8 = zone_pixels_mask.astype(np.uint8) * 255
+    zone_region = cv2.bitwise_and(zone_frame, zone_frame, mask=zone_mask_u8)
+    canny = cv2.Canny(zone_region, 50, 150)
+    edge_density_val = float(np.mean(canny)) / 255.0
+    if edge_density_val < 0.05:
+        edge_density_at_boundary = "low"
+    elif edge_density_val <= 0.15:
+        edge_density_at_boundary = "medium"
+    else:
+        edge_density_at_boundary = "high"
+
+    # Bright intrusion risk — pixels brighter than 80% in zone
+    bright_threshold = 0.80 * 255
+    bright_count = int(np.sum(zone_vals > bright_threshold))
+    bright_ratio = bright_count / zone_pixel_count
+    if bright_ratio < 0.05:
+        bright_intrusion_risk = "none"
+    elif bright_ratio <= 0.20:
+        bright_intrusion_risk = "low"
+    else:
+        bright_intrusion_risk = "high"
+
+    # Flag
+    if edge_density_at_boundary == "low" and bright_intrusion_risk == "none":
+        flag = "clear"
+    else:
+        flag = "review_recommended"
+
+    return {
+        "luminance_variance_at_zone": luminance_variance_at_zone,
+        "edge_density_at_boundary":   edge_density_at_boundary,
+        "bright_intrusion_risk":      bright_intrusion_risk,
+        "flag":                       flag,
+        "dev_phase_behavior":         "log_only",
+        "production_behavior_planned": _PRODUCTION_NOTE,
+    }
+
+
+# ── apply_lut_grade() ───────────────────────────────────────────────────────────
+
+def apply_lut_grade(
+    input_path:   Path,
+    output_path:  Path,
+    lut_name:     str,
+    decode_probe: dict,
+    dry_run:      bool = False,
+) -> Path:
+    """
+    Apply a named LUT grade to the upscaled source.
+    Input MUST be the upscaled 1080p file — never raw, never another graded variant.
+
+    dry_run=True  → simplified per-channel color shift to simulate each LUT.
+    dry_run=False → FFmpeg lut3d filter (not yet implemented).
+    """
+    if dry_run:
+        cap = cv2.VideoCapture(str(input_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"apply_lut_grade: cv2 cannot open input: {input_path}")
+
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(
+            str(output_path), fourcc, float(TARGET_FPS), (width, height)
+        )
+        if not writer.isOpened():
+            cap.release()
+            raise RuntimeError(f"apply_lut_grade: cv2.VideoWriter failed: {output_path}")
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_f = frame.astype(np.float32)
+
+            if lut_name == "cool_authority":
+                # Reduce R by 8%, boost B by 6%, reduce saturation by 15%
+                frame_f[:, :, 2] *= 0.92   # R channel
+                frame_f[:, :, 0] *= 1.06   # B channel
+                frame_f = np.clip(frame_f, 0, 255).astype(np.uint8)
+                hsv = cv2.cvtColor(frame_f, cv2.COLOR_BGR2HSV).astype(np.float32)
+                hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 0.85, 0, 255)
+                frame_f = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
+
+            elif lut_name == "neutral":
+                pass  # pass through unchanged
+
+            elif lut_name == "warm_tension":
+                # Boost R by 5%, reduce B by 4%, reduce saturation by 10%
+                frame_f[:, :, 2] *= 1.05   # R channel
+                frame_f[:, :, 0] *= 0.96   # B channel
+                frame_f = np.clip(frame_f, 0, 255).astype(np.uint8)
+                hsv = cv2.cvtColor(frame_f, cv2.COLOR_BGR2HSV).astype(np.float32)
+                hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 0.90, 0, 255)
+                frame_f = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
+
+            else:
+                print(f"apply_lut_grade: unknown lut_name '{lut_name}', passing through unchanged.")
+
+            out_frame = np.clip(frame_f, 0, 255).astype(np.uint8)
+            writer.write(out_frame)
+
+        cap.release()
+        writer.release()
+        return output_path
+
+    else:
+        # TODO: LIVE LUT GRADING — FFmpeg lut3d filter
+        # Required tool: FFmpeg 6.0
+        # .cube file path: PROJECT_ROOT / "luts" / f"{lut_name}.cube"
+        # Filter chain: lut3d={cube_path}
+        # Full command:
+        #   ffmpeg -i {input_path} -vf "lut3d={cube_path}" -c:v libx264 \
+        #     -preset fast -crf 18 {output_path}
+        # Set dry_run=True to use cv2 channel-shift placeholder.
+        raise NotImplementedError(
+            f"Live LUT grading not yet implemented for '{lut_name}'. "
+            f"Requires FFmpeg 6.0 lut3d filter and a .cube file at "
+            f"<project_root>/luts/{lut_name}.cube. "
+            "Set dry_run=True to use cv2 channel-shift placeholder."
+        )
+
+
+# ── composite_final() ───────────────────────────────────────────────────────────
+
+def composite_final(
+    graded_path: Path,
+    mask_path:   Path,
+    output_path: Path,
+    dry_run:     bool = False,
+) -> Path:
+    """
+    Composite the anchor mask onto the graded video.
+    frame_out = frame_in * (mask / 255.0)
+
+    The mask is generated from the upscaled source (Step 2).
+    The graded input is from apply_lut_grade (Step 3).
+    Never reads from raw_loop or directly from upscaled here.
+
+    dry_run=True  → cv2 frame-by-frame numpy multiply.
+    dry_run=False → FFmpeg overlay filter (not yet implemented).
+    """
+    if dry_run:
+        # Read mask as grayscale float32 multiplier
+        mask_gray = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask_gray is None:
+            raise RuntimeError(f"composite_final: cannot read mask: {mask_path}")
+
+        cap = cv2.VideoCapture(str(graded_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"composite_final: cv2 cannot open graded: {graded_path}")
+
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Resize mask to frame dimensions if needed
+        if mask_gray.shape != (height, width):
+            mask_gray = cv2.resize(mask_gray, (width, height), interpolation=cv2.INTER_AREA)
+
+        mask_f = mask_gray.astype(np.float32) / 255.0   # shape: (H, W)
+        mask_3 = mask_f[:, :, np.newaxis]                # broadcast over BGR channels
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(
+            str(output_path), fourcc, float(TARGET_FPS), (width, height)
+        )
+        if not writer.isOpened():
+            cap.release()
+            raise RuntimeError(f"composite_final: cv2.VideoWriter failed: {output_path}")
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            composited = np.clip(frame.astype(np.float32) * mask_3, 0, 255).astype(np.uint8)
+            writer.write(composited)
+
+        cap.release()
+        writer.release()
+        return output_path
+
+    else:
+        # TODO: LIVE COMPOSITE — FFmpeg overlay filter
+        # Required tool: FFmpeg 6.0
+        # The mask PNG must be used as a grayscale multiply layer.
+        # Filter chain (using movie + multiply blend):
+        #   ffmpeg -i {graded_path} -i {mask_path}
+        #     -filter_complex "[0:v][1:v]blend=all_mode=multiply"
+        #     -c:v libx264 -preset fast -crf 18 {output_path}
+        # Set dry_run=True to use cv2 numpy-multiply placeholder.
+        raise NotImplementedError(
+            "Live composite not yet implemented. "
+            "Requires FFmpeg 6.0 blend=multiply filter chain. "
+            "Set dry_run=True to use cv2 numpy-multiply placeholder."
+        )
+
+
+# ── export_preview() ────────────────────────────────────────────────────────────
+
+def export_preview(
+    source_path:          Path,
+    output_gif_path:      Path,
+    output_manifest_path: Path,
+    seam_frames_playable: list,
+    dry_run:              bool = False,
+) -> dict:
+    """
+    Export a three-segment preview GIF and manifest JSON.
+    Segments cover: base clip character + two seam windows.
+
+    Preview spec (constants, not from generation_constants.json):
+      Resolution: 854 × 480
+      FPS: 5
+      Format: GIF (dry-run writes AVI-in-GIF extension via cv2)
+    """
+    # ── Segment math ───────────────────────────────────────────────────────────
+    seam_1_s = seam_frames_playable[0] / TARGET_FPS
+    seam_2_s = seam_frames_playable[1] / TARGET_FPS
+
+    segments = [
+        {
+            "index":   1,
+            "start_s": 0.0,
+            "end_s":   6.0,
+            "label":   "base_clip_character",
+        },
+        {
+            "index":   2,
+            "start_s": seam_1_s - 1,
+            "end_s":   seam_1_s + 2,
+            "label":   "seam_1_window",
+        },
+        {
+            "index":   3,
+            "start_s": seam_2_s - 1,
+            "end_s":   seam_2_s + 2,
+            "label":   "seam_2_window",
+        },
+    ]
+
+    manifest = {
+        "segments":                     segments,
+        "preview_fps":                  5,
+        "preview_resolution":           [854, 480],
+        "source_seam_frames_playable":  seam_frames_playable,
+    }
+
+    if dry_run:
+        # Preview spec constants (broadcast preview standard — not in generation_constants.json)
+        PREVIEW_W   = 854
+        PREVIEW_H   = 480
+        PREVIEW_FPS = 5
+
+        cap = cv2.VideoCapture(str(source_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"export_preview: cv2 cannot open source: {source_path}")
+
+        source_fps = cap.get(cv2.CAP_PROP_FPS)
+        if source_fps <= 0:
+            source_fps = float(TARGET_FPS)
+
+        subsample_n = max(1, int(source_fps) // PREVIEW_FPS)  # 30 // 5 = 6
+
+        # TODO (live mode): use FFmpeg palette + palettegen for real GIF output.
+        # cv2.VideoWriter does not natively support GIF natively. In dry-run, we
+        # write AVI-format data to a temp .avi file, then rename it to .gif for
+        # downstream metadata consistency. cv2 uses the file extension to pick the
+        # muxer — writing to .gif directly triggers the GIF muxer which only
+        # accepts the `gif` codec; XVID/AVI avoids this restriction.
+        # Live command:
+        #   ffmpeg -i {source_path} \
+        #     -vf "fps=5,scale=854:480:flags=lanczos,split[s0][s1];
+        #          [s0]palettegen[p];[s1][p]paletteuse" \
+        #     {output_gif_path}
+        fourcc = cv2.VideoWriter_fourcc(*"XVID")
+        # Write to a temp .avi file first; rename to .gif after writing is complete.
+        tmp_avi_fd, tmp_avi_str = tempfile.mkstemp(suffix=".avi")
+        import os as _os
+        _os.close(tmp_avi_fd)
+        tmp_avi_path = Path(tmp_avi_str)
+
+        writer = cv2.VideoWriter(
+            str(tmp_avi_path), fourcc, float(PREVIEW_FPS), (PREVIEW_W, PREVIEW_H)
+        )
+        if not writer.isOpened():
+            cap.release()
+            tmp_avi_path.unlink(missing_ok=True)
+            raise RuntimeError(f"export_preview: cv2.VideoWriter failed for temp avi")
+
+        for seg in segments:
+            start_frame = int(seg["start_s"] * source_fps)
+            end_frame   = int(seg["end_s"]   * source_fps)
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, float(start_frame))
+
+            seg_local = 0
+            current   = start_frame
+            while current < end_frame:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if seg_local % subsample_n == 0:
+                    resized = cv2.resize(
+                        frame, (PREVIEW_W, PREVIEW_H), interpolation=cv2.INTER_AREA
+                    )
+                    writer.write(resized)
+                seg_local += 1
+                current   += 1
+
+        cap.release()
+        writer.release()
+
+        # Rename temp .avi to the .gif output path for metadata consistency
+        shutil.move(str(tmp_avi_path), str(output_gif_path))
+
+        with output_manifest_path.open("w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, indent=2)
+
+        return manifest
+
+    else:
+        # TODO: LIVE GIF PREVIEW EXPORT — FFmpeg palette + palettegen
+        # Required tool: FFmpeg 6.0
+        # For each segment, extract with -ss / -t, concatenate, then apply:
+        #   -vf "fps=5,scale=854:480:flags=lanczos,split[s0][s1];
+        #        [s0]palettegen[p];[s1][p]paletteuse"
+        # This produces a high-quality 256-color GIF with optimized palette.
+        # Set dry_run=True to use cv2 AVI-in-GIF placeholder.
+        raise NotImplementedError(
+            "Live GIF preview export not yet implemented. "
+            "Requires FFmpeg 6.0 with palettegen/paletteuse filter chain. "
+            "Set dry_run=True to use cv2-based AVI-in-GIF placeholder export."
+        )
+
+
+# ── run_post_processing() ───────────────────────────────────────────────────────
+
+def run_post_processing(
+    clip_id:              str,
+    raw_loop_path:        Path,
+    decode_probe:         dict,
+    compiled:             dict,
+    seam_frames_playable: list,
+    output_dir:           Path,
+    dry_run:              bool = False,
+) -> dict:
+    """
+    Top-level post-processing orchestrator. Runs all six steps in strict order.
+
+    Processing order is a contract:
+      upscale → mask → risk → LUT → composite → preview
+
+    raw_loop_path is sacred — it is read once (upscale step) and never
+    written to, modified, or used as input after Step 1.
+
+    Args:
+        clip_id:              Identifier for this clip bundle (= run_id).
+        raw_loop_path:        Path to the verified raw loop from generator.
+        decode_probe:         Result dict from run_decode_probe().
+        compiled:             Compiled prompt dict (contains selected_lut).
+        seam_frames_playable: [seam_1_frame, seam_2_frame] for preview math.
+        output_dir:           Root output directory for all bundles.
+        dry_run:              If True, all steps use cv2/numpy placeholders.
+
+    Returns:
+        Full result dict with all output paths and metadata.
+    """
+    # ── Step 0: Guard ──────────────────────────────────────────────────────────
+    if not raw_loop_path.exists():
+        raise FileNotFoundError(
+            f"raw_loop not found for post-processing: {raw_loop_path}"
+        )
+
+    # ── Step 1: Upscale ────────────────────────────────────────────────────────
+    upscale_dir = output_dir / clip_id / "raw"
+    upscale_dir.mkdir(parents=True, exist_ok=True)
+    upscaled_path = upscale_dir / f"{clip_id}_1080p.mp4"
+    upscale_clip(raw_loop_path, upscaled_path, decode_probe, dry_run)
+
+    # ── Step 2: Masks + Risk ───────────────────────────────────────────────────
+    masks_dir = output_dir / clip_id / "masks"
+    masks_dir.mkdir(parents=True, exist_ok=True)
+
+    masks: dict = {}
+    risks: dict = {}
+
+    for position in ANCHOR_POSITIONS:
+        mask_path = masks_dir / f"{clip_id}_mask_{position}.png"
+        risk_path = masks_dir / f"{clip_id}_risk_{position}.json"
+
+        generate_anchor_mask(position, mask_path, tuple(UPSCALE_TARGET), dry_run)
+        risk = assess_content_risk(mask_path, upscaled_path, position, dry_run)
+
+        with risk_path.open("w", encoding="utf-8") as fh:
+            json.dump(risk, fh, indent=2)
+
+        masks[position] = mask_path
+        risks[position] = risk
+
+    # ── Step 3: LUT grading ────────────────────────────────────────────────────
+    luts_dir = output_dir / clip_id / "luts"
+    luts_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_lut    = compiled["selected_lut"]
+    luts_to_generate = list(set([selected_lut] + LUT_ALWAYS))
+
+    graded_variants: dict = {}
+    for lut_name in luts_to_generate:
+        lut_output = luts_dir / f"{clip_id}_{lut_name}.mp4"
+        apply_lut_grade(upscaled_path, lut_output, lut_name, decode_probe, dry_run)
+        graded_variants[lut_name] = lut_output
+
+    # ── Step 4: Default composite ──────────────────────────────────────────────
+    # Composite = selected LUT variant + center mask
+    # The mask was generated from the upscaled source (Step 2).
+    # We apply it to the graded variant — never to the upscaled or raw source.
+    final_dir = output_dir / clip_id / "final"
+    final_dir.mkdir(parents=True, exist_ok=True)
+
+    final_output   = final_dir / f"{clip_id}.mp4"
+    center_mask    = masks["center"]
+    graded_for_composite = graded_variants[selected_lut]
+
+    composite_final(graded_for_composite, center_mask, final_output, dry_run)
+
+    # ── Step 5: Preview ────────────────────────────────────────────────────────
+    preview_gif_path      = final_dir / f"{clip_id}_preview.gif"
+    preview_manifest_path = final_dir / f"{clip_id}_preview_manifest.json"
+
+    manifest = export_preview(
+        final_output,
+        preview_gif_path,
+        preview_manifest_path,
+        seam_frames_playable,
+        dry_run,
+    )
+
+    # ── Step 6: Return result dict ─────────────────────────────────────────────
+    return {
+        "clip_id":         clip_id,
+        "upscaled":        str(upscaled_path),
+        "masks":           {pos: str(path) for pos, path in masks.items()},
+        "risks":           risks,
+        "graded_variants": {name: str(path) for name, path in graded_variants.items()},
+        "selected_lut":    selected_lut,
+        "luts_generated":  luts_to_generate,
+        "final":           str(final_output),
+        "preview_gif":     str(preview_gif_path),
+        "preview_manifest": manifest,
+    }

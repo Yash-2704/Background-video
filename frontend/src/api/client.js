@@ -1,0 +1,79 @@
+const API_BASE = 'http://localhost:8000'
+
+export async function compilePrompts(formData) {
+  let response
+  try {
+    response = await fetch(`${API_BASE}/api/v1/compile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formData),
+    })
+  } catch (networkError) {
+    throw new Error(`Network error reaching compile endpoint: ${networkError.message}`)
+  }
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Compile failed: ${response.status} ${text}`)
+  }
+
+  return response.json()
+}
+
+export async function submitGeneration(runPayload) {
+  let response
+  try {
+    response = await fetch(`${API_BASE}/api/v1/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(runPayload),
+    })
+  } catch (networkError) {
+    throw new Error(`Network error reaching generate endpoint: ${networkError.message}`)
+  }
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Generation failed: ${response.status} ${text}`)
+  }
+
+  return response.json()
+}
+
+export async function getRunStatus(run_id) {
+  let response
+  try {
+    response = await fetch(`${API_BASE}/api/v1/run/${run_id}/status`)
+  } catch (networkError) {
+    throw new Error(`Network error reaching status endpoint: ${networkError.message}`)
+  }
+
+  if (response.status === 404) {
+    return { status: 'pending', stages: {} }
+  }
+
+  if (!response.ok) {
+    throw new Error(`Status check failed: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function fetchBundleFile(clip_id, filename) {
+  let response
+  try {
+    response = await fetch(`${API_BASE}/api/v1/bundle/${clip_id}/${filename}`)
+  } catch (networkError) {
+    throw new Error(`Network error reaching bundle endpoint: ${networkError.message}`)
+  }
+
+  if (response.status === 404) {
+    return null
+  }
+
+  if (!response.ok) {
+    throw new Error(`Bundle fetch failed: ${response.status}`)
+  }
+
+  return response.json()
+}

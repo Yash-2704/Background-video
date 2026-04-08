@@ -1,0 +1,187 @@
+/* ── Reset / base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a1a;
+}
+
+/* ── App shell ─────────────────────────────────────────────────────────────── */
+.app {
+  min-height: 100vh;
+  padding: 0 1rem 3rem;
+}
+
+.app-header {
+  background: #1a1a2e;
+  color: #e8eaf0;
+  padding: 1rem 2rem;
+  margin-bottom: 2rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* ── Form wrapper ──────────────────────────────────────────────────────────── */
+.form-wrapper {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+/* ── Fieldset ──────────────────────────────────────────────────────────────── */
+.field-set {
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  padding: 1rem 1.25rem 1.25rem;
+  margin: 0 0 1rem;
+  background: #ffffff;
+}
+
+.field-set legend {
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0 0.25rem;
+  color: #111;
+}
+
+.field-driver {
+  margin: 0.2rem 0 0.75rem;
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+/* ── Select ────────────────────────────────────────────────────────────────── */
+.field-select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  background: #fafafa;
+  color: #1a1a1a;
+  appearance: auto;
+}
+
+.field-select:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
+/* ── Submit button ─────────────────────────────────────────────────────────── */
+.submit-btn {
+  display: block;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  margin-top: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #1d4ed8;
+  color: #ffffff;
+  transition: background 0.15s;
+}
+
+.submit-btn:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+.submit-btn:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+  color: #e5e7eb;
+}
+
+/* ── Error message ─────────────────────────────────────────────────────────── */
+.error-message {
+  border-left: 4px solid #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 0.75rem 1rem;
+  border-radius: 0 4px 4px 0;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Result panel ──────────────────────────────────────────────────────────── */
+.result-panel {
+  margin-top: 1.5rem;
+  background: #e8f0fe;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  padding: 1.25rem;
+}
+
+.result-title {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.result-row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.9rem;
+}
+
+.result-label {
+  font-weight: 600;
+  color: #374151;
+  min-width: 150px;
+  flex-shrink: 0;
+}
+
+.result-value {
+  font-family: 'Courier New', monospace;
+  color: #1a1a1a;
+  word-break: break-all;
+}
+
+/* ── Proceed button (placeholder) ──────────────────────────────────────────── */
+.proceed-btn {
+  display: block;
+  width: 100%;
+  margin-top: 1rem;
+  padding: 0.65rem 1rem;
+  font-size: 0.9rem;
+  border: 1px solid #9ca3af;
+  border-radius: 6px;
+  background: #e5e7eb;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .app-header {
+    padding: 0.75rem 1rem;
+  }
+
+  .field-set {
+    padding: 0.75rem 1rem 1rem;
+  }
+
+  .field-select {
+    width: 100%;
+  }
+
+  .result-row {
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .result-label {
+    min-width: unset;
+  }
+}

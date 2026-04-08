@@ -1,0 +1,14 @@
+{
+  "python_version": "3.10",
+  "cuda_version": "12.1",
+  "torch_version": "2.1.0",
+  "diffusers_version": "0.27.0",
+  "cogvideox_checkpoint": "THUDM/CogVideoX-5b",
+  "cogvideox_commit_hash": "UNSET \u2014 lock at first successful run",
+  "upscaler": "Real-ESRGAN-Video",
+  "upscaler_model_weights": "realesr-general-wdn-x4v3",
+  "interpolation_method": "RIFE-4.6",
+  "temporal_probe_library": "opencv-python==4.9.0",
+  "ssim_library": "scikit-image==0.22.0",
+  "ffmpeg_version": "6.0"
+}

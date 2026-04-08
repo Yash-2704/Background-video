@@ -1,0 +1,317 @@
+/* ── Viewer wrapper ──────────────────────────────────────────────────────────── */
+
+.viewer-wrapper {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  font-family: system-ui, sans-serif;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────────── */
+
+.viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.viewer-clip-id {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #1a1a1a;
+}
+
+.viewer-back-btn {
+  padding: 0.35rem 0.85rem;
+  font-size: 0.85rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.viewer-back-btn:hover {
+  background: #e8e8e8;
+}
+
+/* ── Tab bar ─────────────────────────────────────────────────────────────────── */
+
+.viewer-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e5e7eb;
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.6rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  background: #f3f4f6;
+}
+
+.tab-btn--active {
+  border-bottom-color: #2563eb;
+  background: #eff6ff;
+}
+
+.tab-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.tab-btn--active .tab-label {
+  color: #1d4ed8;
+}
+
+.tab-audience {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+/* ── Tab content area ────────────────────────────────────────────────────────── */
+
+.viewer-content {
+  max-width: 760px;
+  margin: 0 auto;
+  overflow-y: auto;
+}
+
+/* ── Tab panel ───────────────────────────────────────────────────────────────── */
+
+.tab-panel {
+  padding-bottom: 2rem;
+}
+
+/* ── Section header ──────────────────────────────────────────────────────────── */
+
+.section-header {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.section-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #374151;
+  margin: 0 0 0.3rem 0;
+}
+
+.section-rule {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 0;
+}
+
+/* ── InfoRow ─────────────────────────────────────────────────────────────────── */
+
+.info-row {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  font-size: 0.875rem;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.info-label {
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.info-value {
+  color: #111827;
+  word-break: break-all;
+}
+
+/* ── Gate badge ──────────────────────────────────────────────────────────────── */
+
+.gate-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.gate-pass {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.gate-fail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.gate-review {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* ── Cost badge ──────────────────────────────────────────────────────────────── */
+
+.cost-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.cost-none {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.cost-blue {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.cost-amber {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* ── Editable parameter card ─────────────────────────────────────────────────── */
+
+.param-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.75rem;
+  background: #fafafa;
+}
+
+.param-name {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 0.5rem;
+}
+
+.param-warning {
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  background: #fef3c7;
+  border-left: 3px solid #f59e0b;
+  font-size: 0.8rem;
+  color: #78350f;
+  border-radius: 0 4px 4px 0;
+}
+
+/* ── Locked parameters ───────────────────────────────────────────────────────── */
+
+.locked-warning {
+  border-left: 3px solid #f59e0b;
+  padding-left: 0.85rem;
+  margin-top: 0.25rem;
+  background: #fffbeb;
+  border-radius: 0 4px 4px 0;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.locked-note {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #78350f;
+  font-style: italic;
+}
+
+/* ── Editor notes callout ────────────────────────────────────────────────────── */
+
+.editor-notes-callout {
+  margin-top: 0.75rem;
+  padding: 0.65rem 1rem;
+  border-left: 4px solid #3b82f6;
+  background: #eff6ff;
+  font-size: 0.875rem;
+  color: #1e3a5f;
+  font-style: italic;
+  border-radius: 0 4px 4px 0;
+}
+
+/* ── Attempt card (generation log) ───────────────────────────────────────────── */
+
+.attempt-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.75rem;
+  background: #fafafa;
+}
+
+.attempt-number {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 0.4rem;
+}
+
+.attempt-failures {
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.attempt-failures-label {
+  font-weight: 600;
+  color: #dc2626;
+}
+
+.attempt-failures ul {
+  margin: 0.2rem 0 0 1rem;
+  padding: 0;
+  color: #991b1b;
+}
+
+/* ── Loading state ───────────────────────────────────────────────────────────── */
+
+.tab-loading {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.9rem;
+  padding: 3rem 0;
+}
+
+/* ── File not available state ────────────────────────────────────────────────── */
+
+.tab-unavailable {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.9rem;
+  padding: 3rem 0;
+}
+
+/* ── No retry message ────────────────────────────────────────────────────────── */
+
+.no-retry-message {
+  color: #6b7280;
+  font-size: 0.875rem;
+  font-style: italic;
+  padding: 0.5rem 0;
+}

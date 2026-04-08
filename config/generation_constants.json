@@ -1,0 +1,58 @@
+{
+  "model": "CogVideoX-5b",
+  "tokenizer": "CogVideoX-5b-tokenizer-v1",
+  "sampler": "DPM++ 2M",
+  "steps": 50,
+  "cfg_scale": 6.0,
+  "native_fps": 8,
+  "target_fps": 30,
+  "generate_resolution": [720, 480],
+  "upscale_target": [1920, 1080],
+  "base_clip_duration_s": 6,
+  "base_clip_frames_native": 49,
+  "total_anchor_screen_time_s": 25,
+  "extensions_per_clip": 2,
+  "total_loop_duration_s": 18,
+  "playable_duration_s": 17.067,
+  "crossfade_frames": 14,
+  "crossfade_duration_s": 0.467,
+  "seam_count": 2,
+  "total_crossfade_consumed_s": 0.933,
+  "anchor_position_default": "center",
+  "anchor_zone": {"x": 0.25, "y": 0.35, "w": 0.50, "h": 0.55},
+  "anchor_feather_px": 24,
+  "luminance_reduction": 0.22,
+  "max_regeneration_retries": 3,
+  "quality_gates": {
+    "flicker_index_reject": 0.01,
+    "warping_artifact_reject": 0.05,
+    "loop_quality_threshold": 0.80,
+    "luminance_gate_min": 0.30,
+    "luminance_gate_max": 0.70
+  },
+  "lut_always_generate": ["neutral"],
+  "lut_options": {
+    "Cool": "cool_authority",
+    "Neutral": "neutral",
+    "Warm": "warm_tension"
+  },
+  "lut_specifications": {
+    "cool_authority": {
+      "color_temp_shift_k": -800,
+      "saturation_multiplier": 0.85,
+      "lift_shadows": -0.02
+    },
+    "neutral": {
+      "color_temp_shift_k": 0,
+      "saturation_multiplier": 1.0,
+      "lift_shadows": 0
+    },
+    "warm_tension": {
+      "color_temp_shift_k": 600,
+      "saturation_multiplier": 0.90,
+      "lift_shadows": -0.04
+    }
+  },
+  "dev_mode": true,
+  "production_note": "Set extensions_per_clip to 4 and dev_mode to false for production"
+}

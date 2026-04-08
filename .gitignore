@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+output/
+*.mp4
+*.gif
+*.png
+.DS_Store
+.venv
+frontend/node_modules/
+.pytest_cache/
