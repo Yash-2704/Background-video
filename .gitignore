@@ -9,3 +9,6 @@ output/
 .venv
 frontend/node_modules/
 .pytest_cache/
+Practical-RIFE/
+Wan2.2/
+realesrgan/
