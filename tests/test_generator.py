@@ -1,7 +1,7 @@
 """
 tests/test_generator.py
 ────────────────────────
-15 tests covering core/generator.py dry-run behavior.
+16 tests covering core/generator.py dry-run behavior.
 
 Isolation: the compiled dict fixture is hardcoded here using the canonical
 Economy / Urban / Dusk / Cool / Serious / Gentle example so this test module
@@ -160,12 +160,20 @@ def test_generate_clip_dry_run_exact_frame_count(tmp_path):
         output_path=out,
         dry_run=True,
     )
-    expected = GENERATION_CONSTANTS["base_clip_frames_native"]
+    expected = GENERATION_CONSTANTS["base_clip_frames_native"]  # 145
     assert _frame_count(out) == expected
 
 
-def test_interpolate_clip_dry_run_increases_frame_count(tmp_path):
-    """Test 11: interpolate_clip() dry-run produces more frames than its input."""
+def test_interpolate_clip_dry_run_produces_valid_output(tmp_path):
+    """
+    Test 11: interpolate_clip() dry-run produces a valid readable output file.
+
+    Note: with native_fps == target_fps == 24, the frame ratio is 1.0 so
+    the output has the same frame count as the input. This is correct behavior
+    for the 24fps pipeline — interpolate_clip() is OPTIONAL and not called
+    by run_generation(). The test verifies the function still works when
+    called explicitly.
+    """
     src = tmp_path / "src.mp4"
     dst = tmp_path / "dst.mp4"
     generate_clip(
@@ -174,7 +182,11 @@ def test_interpolate_clip_dry_run_increases_frame_count(tmp_path):
     )
     src_count = _frame_count(src)
     interpolate_clip(src, dst, dry_run=True)
-    assert _frame_count(dst) > src_count
+    dst_count = _frame_count(dst)
+    # With 24fps native == 24fps target, output count equals input count.
+    # If target_fps is ever raised above native_fps, this will be > src_count.
+    assert dst_count >= src_count
+    assert dst.exists()
 
 
 def test_crossfade_join_returns_required_keys(tmp_path):
@@ -182,10 +194,8 @@ def test_crossfade_join_returns_required_keys(tmp_path):
     clips = []
     for i in range(3):
         raw = tmp_path / f"c{i}.mp4"
-        interp = tmp_path / f"c{i}_30fps.mp4"
         generate_clip("p", "m", "n", seed=20000 + i, clip_index=i, output_path=raw, dry_run=True)
-        interpolate_clip(raw, interp, dry_run=True)
-        clips.append(interp)
+        clips.append(raw)
 
     out   = tmp_path / "loop.mp4"
     result = crossfade_join(clips, out, dry_run=True)
@@ -195,19 +205,23 @@ def test_crossfade_join_returns_required_keys(tmp_path):
 
 
 def test_crossfade_join_seam_math(tmp_path):
-    """Test 13: seam_frames_playable[0] == seam_frames_raw[0] - crossfade_frames."""
+    """
+    Test 13: seam_frames_playable matches GENERATION_CONSTANTS["seam_frames_playable_timeline"].
+
+    Config is the authority for playable seam values. The formula
+    (seam_raw - crossfade_frames) uses a half-window convention that differs
+    from the config's full-window calculation — we assert against config directly.
+    """
     clips = []
     for i in range(3):
-        raw   = tmp_path / f"d{i}.mp4"
-        interp = tmp_path / f"d{i}_30fps.mp4"
+        raw = tmp_path / f"d{i}.mp4"
         generate_clip("p", "m", "n", seed=30000 + i, clip_index=i, output_path=raw, dry_run=True)
-        interpolate_clip(raw, interp, dry_run=True)
-        clips.append(interp)
+        clips.append(raw)
 
     out    = tmp_path / "loop2.mp4"
     result = crossfade_join(clips, out, dry_run=True)
-    cf     = GENERATION_CONSTANTS["crossfade_frames"]
-    assert result["seam_frames_playable"][0] == result["seam_frames_raw"][0] - cf
+    expected_playable = GENERATION_CONSTANTS["seam_frames_playable_timeline"]  # [138, 269]
+    assert result["seam_frames_playable"] == expected_playable
 
 
 def test_run_generation_cleans_up_on_failure(tmp_path):
@@ -223,3 +237,9 @@ def test_run_generation_assigns_seed_in_valid_range(tmp_path):
     """Test 15: run_generation() with no seed argument assigns a seed in [10000, 99999]."""
     result = run_generation(COMPILED_DICT, "run015", tmp_path)
     assert 10000 <= result["seed"] <= 99999
+
+
+def test_run_generation_generation_modes_in_log(tmp_path):
+    """Test 16: generation_log["generation_modes"] == ["T2V", "I2V", "I2V"]."""
+    result = run_generation(COMPILED_DICT, "run016", tmp_path, seed=42015)
+    assert result["generation_log"]["generation_modes"] == ["T2V", "I2V", "I2V"]

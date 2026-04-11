@@ -29,7 +29,7 @@ const mockRunResult = {
   status:               'complete',
   raw_loop_path:        'raw/bg_001_b2e7f3_raw_loop.mp4',
   seed:                 42819,
-  seam_frames_playable: [169, 338],
+  seam_frames_playable: [138, 269],
   gate_result:          { overall: 'pass' },
 }
 
@@ -42,11 +42,11 @@ const mockMetadata = {
   generation: {
     model: 'CogVideoX-5b', sampler: 'DPM++ 2M',
     cfg_scale: 6.0, steps: 50, seed: 42819,
-    native_fps: 8, interpolated_to_fps: 30,
-    base_duration_s: 6, extensions: 2,
-    total_raw_duration_s: 18, playable_duration_s: 17.067,
+    native_fps: 24,
+    base_duration_s: 6.04, extensions: 2,
+    total_raw_duration_s: 18.12, playable_duration_s: 16.917,
     crossfade_frames: 14,
-    seam_frames_playable: [169, 338],
+    seam_frames_playable: [138, 269],
   },
   prompt_provenance: {
     compiler_version: '1.0.0',
@@ -131,10 +131,10 @@ const mockContract = {
   integration_contract_version: '1.0',
   for_human_editor: {
     primary_asset: 'final/bg_001_b2e7f3.mp4',
-    duration_s: 17.067, fps: 30,
+    duration_s: 16.917, fps: 24,
     resolution: [1920, 1080],
     is_loop: true, loop_clean: true,
-    recommended_cut_points_s: [0, 5.63, 11.27, 17.07],
+    recommended_cut_points_s: [0, 5.75, 11.21, 16.917],
     editor_notes: 'Center anchor zone is pre-composited.',
   },
   for_downstream_modules: {
@@ -153,7 +153,7 @@ const mockContract = {
   },
   for_compositor_process: {
     primary_asset: 'final/bg_001_b2e7f3.mp4',
-    frame_count: 512,
+    frame_count: 406,
     verified_loop: true,
     flicker_index: 0.003,
     warping_artifact_score: 0.018,
@@ -280,10 +280,10 @@ describe('Tab 1 — Generation Record', () => {
     )
   })
 
-  it('12. native_fps and interpolated_to_fps shown as "8fps → 30fps"', async () => {
+  it('12. native_fps shown as "24fps (native)"', async () => {
     renderViewer()
     await waitFor(() =>
-      expect(screen.getByText('8fps → 30fps')).toBeInTheDocument()
+      expect(screen.getByText('24fps (native)')).toBeInTheDocument()
     )
   })
 })
@@ -407,12 +407,12 @@ describe('Tab 3 — Integration Contract', () => {
     )
   })
 
-  it('22. frame_count 512 is visible', async () => {
+  it('22. frame_count 406 is visible', async () => {
     renderViewer()
     await waitFor(() => expect(fetchBundleFile).toHaveBeenCalled())
     await userEvent.click(screen.getByRole('tab', { name: /integration contract/i }))
     await waitFor(() =>
-      expect(screen.getByText('512')).toBeInTheDocument()
+      expect(screen.getByText('406')).toBeInTheDocument()
     )
   })
 
@@ -582,7 +582,7 @@ const mockRunResultComplete = {
   raw_loop_path:        'raw/bg_001_b2e7f3_raw_loop.mp4',
   seed:                 42819,
   seam_frames_raw:      [183, 366],
-  seam_frames_playable: [169, 338],
+  seam_frames_playable: [138, 269],
   stages:               {},
   gate_result:          { overall: 'pass' },
 }

@@ -117,23 +117,26 @@ def _build_files_section(
     }
 
 
-def _compute_cut_points(
-    seam_frames_playable: list,
-    target_fps:           int,
-    playable_duration_s:  float,
-) -> list:
+def _compute_cut_points() -> list:
     """
     Compute recommended cut points in seconds.
     Returns [0, seam_1_s, seam_2_s, playable_duration_s], rounded to 2 dp.
 
     Sources:
-      seam_frames_playable — generation_result["seam_frames_playable"]
-      target_fps           — GENERATION_CONSTANTS["target_fps"]
-      playable_duration_s  — GENERATION_CONSTANTS["playable_duration_s"]
+      seam_positions_seconds_playable — GENERATION_CONSTANTS (pre-computed)
+      playable_duration_s             — GENERATION_CONSTANTS["playable_duration_s"]
+
+    Values are read from config rather than derived from frame/fps arithmetic
+    to avoid rounding drift (e.g. 269/24 = 11.2083... vs config-authoritative 11.21).
     """
-    seam_1_s = round(seam_frames_playable[0] / target_fps, 2)
-    seam_2_s = round(seam_frames_playable[1] / target_fps, 2)
-    return [0, seam_1_s, seam_2_s, round(playable_duration_s, 2)]
+    seam_positions = GENERATION_CONSTANTS["seam_positions_seconds_playable"]
+    playable_duration_s = GENERATION_CONSTANTS["playable_duration_s"]
+    return [
+        0,
+        round(seam_positions[0], 2),
+        round(seam_positions[1], 2),
+        round(playable_duration_s, 2),
+    ]
 
 
 def _compute_anchor_pixels() -> dict:
@@ -283,8 +286,12 @@ def assemble_metadata(
 
         "environment": {
             # All fields sourced from config/environment_constants.json
-            "cogvideox_checkpoint":   EC["cogvideox_checkpoint"],
-            "cogvideox_commit_hash":  EC["cogvideox_commit_hash"],
+            # Wan2.2-TI2V-5B-Diffusers model fields (replaced CogVideoX fields)
+            "model_id":               EC["model_id"],
+            "model_checkpoint":       EC["model_checkpoint"],
+            "model_commit_hash":      EC["model_commit_hash"],
+            "model_architecture":     EC["model_architecture"],
+            "model_task":             EC["model_task"],
             "upscaler_model_weights": EC["upscaler_model_weights"],
             "interpolation_method":   EC["interpolation_method"],
             "temporal_probe_library": EC["temporal_probe_library"],
@@ -292,19 +299,26 @@ def assemble_metadata(
         },
 
         "generation": {
+            # Fields removed in Wan2.2-TI2V-5B migration:
+            # tokenizer — not applicable to this model
+            # interpolated_to_fps — model outputs 24fps natively,
+            #   no interpolation step in pipeline
+            # interpolation_method — removed from generation block;
+            #   RIFE retained in environment block for crossfade only
+
             # Model/sampler config — from GENERATION_CONSTANTS
             "model":                GC["model"],
-            "tokenizer":            GC["tokenizer"],
             "sampler":              GC["sampler"],
             "cfg_scale":            GC["cfg_scale"],
             "steps":                GC["steps"],
             # Seed — from generation_result (caller-assigned or randomly drawn)
             "seed":                 generation_result["seed"],
-            # FPS pipeline — from GENERATION_CONSTANTS
+            # FPS — from GENERATION_CONSTANTS (24fps native, no interpolation)
             "native_fps":           GC["native_fps"],
-            "interpolated_to_fps":  GC["target_fps"],
-            # interpolation_method lives in ENV_CONSTANTS, not GENERATION_CONSTANTS
-            "interpolation_method": EC["interpolation_method"],
+            # Frame counts — from GENERATION_CONSTANTS
+            "base_clip_frames":     GC["base_clip_frames_native"],
+            # Resolution — from GENERATION_CONSTANTS
+            "generate_resolution":  GC["generate_resolution"],
             # Duration / seam config — from GENERATION_CONSTANTS
             "base_duration_s":      GC["base_clip_duration_s"],
             "extensions":           GC["extensions_per_clip"],
@@ -315,6 +329,14 @@ def assemble_metadata(
             # Seam positions — from generation_result (computed by crossfade_join)
             "seam_frames_raw":      generation_result["seam_frames_raw"],
             "seam_frames_playable": generation_result["seam_frames_playable"],
+            # VAE compression params — from GENERATION_CONSTANTS
+            "vae_compression":      GC["vae_compression"],
+            # Generation mode per clip — from GENERATION_CONSTANTS
+            "generation_mode_by_clip": {
+                "base_clip":   GC["generation_modes"]["base_clip"],
+                "extension_1": GC["generation_modes"]["extension_1"],
+                "extension_2": GC["generation_modes"]["extension_2"],
+            },
         },
 
         "prompt_provenance": {
@@ -506,16 +528,12 @@ def assemble_integration_contract(
     """
     GC = GENERATION_CONSTANTS
 
-    # seam_frames_playable — from assembled metadata (originally from generation_result)
-    seam_frames_playable = metadata["generation"]["seam_frames_playable"]
-    cut_points = _compute_cut_points(
-        seam_frames_playable,
-        GC["target_fps"],
-        GC["playable_duration_s"],
-    )
+    # cut_points — read from GENERATION_CONSTANTS (seam seconds + playable duration)
+    cut_points = _compute_cut_points()
 
-    # frame_count — playable_duration_s * target_fps (both from GENERATION_CONSTANTS)
-    frame_count = int(round(GC["playable_duration_s"] * GC["target_fps"]))
+    # frame_count — read pre-computed value from GENERATION_CONSTANTS to avoid
+    # rounding drift (playable_duration_s * target_fps can drift by ±1 frame)
+    frame_count = int(GC["total_playable_frames"])
 
     # loop_frame_delta_max value: use explicit key if present (future probe), else
     # derive from perceptual_loop_score (1.0 - SSIM approximates mean abs delta)

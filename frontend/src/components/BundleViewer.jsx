@@ -89,7 +89,7 @@ function MetadataPanel({ data }) {
   const qg = data.quality_gates      || {}
   const po = data.post_processing    || {}
 
-  const fpsDisplay = `${g.native_fps ?? '?'}fps → ${g.interpolated_to_fps ?? '?'}fps`
+  const fpsDisplay = `${g.native_fps ?? '?'}fps (native)`
   const positiveHash = pp.positive_hash
     ? `${pp.positive_hash.slice(0, 8)}...`
     : '—'

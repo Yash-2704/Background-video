@@ -80,8 +80,8 @@ def dry_run_generation_result(tmp_path):
         "raw_loop_path":        str(tmp_path / "raw" / "raw_loop.mp4"),
         "seed":                 42819,
         "attempts_used":        1,
-        "seam_frames_raw":      [183, 366],
-        "seam_frames_playable": [169, 338],
+        "seam_frames_raw":      [145, 290],
+        "seam_frames_playable": [138, 269],
         "generation_log":       {},
         "failure_log":          [],
     }
@@ -749,6 +749,41 @@ def test_46_no_ml_imports():
 
     assert "torch" not in sys.modules, "torch was imported by metadata_assembler"
     assert "diffusers" not in sys.modules, "diffusers was imported by metadata_assembler"
+
+
+def test_48_generation_block_contains_vae_compression(
+    tmp_path, canonical_compiled, dry_run_generation_result,
+    dry_decode, dry_temporal, dry_gates, dry_post_result
+):
+    """generation block contains 'vae_compression' with correct temporal value."""
+    meta = assemble_metadata(
+        clip_id=_CLIP_ID, run_number=1,
+        compiled=canonical_compiled,
+        generation_result=dry_run_generation_result,
+        decode_probe=dry_decode, temporal_probe=dry_temporal,
+        gate_result=dry_gates, post_result=dry_post_result,
+        output_dir=tmp_path,
+    )
+    assert "vae_compression" in meta["generation"]
+    assert meta["generation"]["vae_compression"]["temporal"] == 4
+
+
+def test_49_generation_block_contains_generation_mode_by_clip(
+    tmp_path, canonical_compiled, dry_run_generation_result,
+    dry_decode, dry_temporal, dry_gates, dry_post_result
+):
+    """generation block contains 'generation_mode_by_clip' with correct values."""
+    meta = assemble_metadata(
+        clip_id=_CLIP_ID, run_number=1,
+        compiled=canonical_compiled,
+        generation_result=dry_run_generation_result,
+        decode_probe=dry_decode, temporal_probe=dry_temporal,
+        gate_result=dry_gates, post_result=dry_post_result,
+        output_dir=tmp_path,
+    )
+    assert "generation_mode_by_clip" in meta["generation"]
+    assert meta["generation"]["generation_mode_by_clip"]["base_clip"] == "T2V"
+    assert meta["generation"]["generation_mode_by_clip"]["extension_1"] == "I2V"
 
 
 def test_47_prompt_compiler_tests_still_pass():

@@ -7,6 +7,8 @@ Run with: pytest tests/
 """
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,11 +23,15 @@ ENV_REQUIRED_KEYS = [
     "cuda_version",
     "torch_version",
     "diffusers_version",
-    "cogvideox_checkpoint",
-    "cogvideox_commit_hash",
+    "model_id",
+    "model_checkpoint",
+    "model_commit_hash",
+    "model_architecture",
+    "model_task",
     "upscaler",
     "upscaler_model_weights",
     "interpolation_method",
+    "interpolation_status",
     "temporal_probe_library",
     "ssim_library",
     "ffmpeg_version",
@@ -33,7 +39,7 @@ ENV_REQUIRED_KEYS = [
 
 GEN_REQUIRED_KEYS = [
     "model",
-    "tokenizer",
+    # "tokenizer" removed — not applicable to Wan2.2-TI2V-5B-Diffusers
     "sampler",
     "steps",
     "cfg_scale",
@@ -41,6 +47,9 @@ GEN_REQUIRED_KEYS = [
     "target_fps",
     "generate_resolution",
     "upscale_target",
+    "upscale_factor",
+    "vae_compression",
+    "generation_modes",
     "base_clip_duration_s",
     "base_clip_frames_native",
     "total_anchor_screen_time_s",
@@ -156,4 +165,132 @@ def test_upscale_target_larger_than_generate_resolution(gen_cfg):
     )
     assert dst[1] > src[1], (
         f"upscale_target height ({dst[1]}) must be > generate_resolution height ({src[1]})"
+    )
+
+
+# ── Test 9: Model identity updated to Wan2.2-TI2V-5B-Diffusers ───────────────
+def test_model_name(gen_cfg, env_cfg):
+    """model field in generation_constants and model_id in environment_constants must reference Wan2.2."""
+    assert gen_cfg["model"] == "Wan2.2-TI2V-5B-Diffusers", (
+        f"generation_constants model must be 'Wan2.2-TI2V-5B-Diffusers', got {gen_cfg['model']!r}"
+    )
+    assert env_cfg["model_id"] == "Wan2.2-TI2V-5B-Diffusers", (
+        f"environment_constants model_id must be 'Wan2.2-TI2V-5B-Diffusers', got {env_cfg['model_id']!r}"
+    )
+
+
+# ── Test 10: native_fps is 24 ────────────────────────────────────────────────
+def test_native_fps(gen_cfg):
+    """native_fps must be 24 (Wan2.2-TI2V-5B native rate, not CogVideoX 8fps)."""
+    assert gen_cfg["native_fps"] == 24, (
+        f"native_fps must be 24, got {gen_cfg['native_fps']} — stale config?"
+    )
+
+
+# ── Test 11: generate_resolution is [1280, 720] ───────────────────────────────
+def test_generate_resolution_values(gen_cfg):
+    """generate_resolution must be [1280, 720] for Wan2.2-TI2V-5B."""
+    assert gen_cfg["generate_resolution"] == [1280, 720], (
+        f"generate_resolution must be [1280, 720], got {gen_cfg['generate_resolution']}"
+    )
+
+
+# ── Test 12: base_clip_duration_s and base_clip_frames_native ────────────────
+def test_base_clip_values(gen_cfg):
+    """base_clip_duration_s must be 6.04 and base_clip_frames_native must be 145."""
+    assert gen_cfg["base_clip_duration_s"] == 6.04, (
+        f"base_clip_duration_s must be 6.04, got {gen_cfg['base_clip_duration_s']}"
+    )
+    assert gen_cfg["base_clip_frames_native"] == 145, (
+        f"base_clip_frames_native must be 145, got {gen_cfg['base_clip_frames_native']}"
+    )
+
+
+# ── Test 13: playable_duration_s and total_loop_duration_s values ─────────────
+def test_duration_values(gen_cfg):
+    """playable_duration_s must be 16.917 and total_loop_duration_s must be 18.12."""
+    assert gen_cfg["playable_duration_s"] == 16.917, (
+        f"playable_duration_s must be 16.917, got {gen_cfg['playable_duration_s']}"
+    )
+    assert gen_cfg["total_loop_duration_s"] == 18.12, (
+        f"total_loop_duration_s must be 18.12, got {gen_cfg['total_loop_duration_s']}"
+    )
+
+
+# ── Test 14: model_checkpoint key present in environment_constants ─────────────
+def test_model_checkpoint_key_present(env_cfg):
+    """environment_constants.json must have model_checkpoint, not cogvideox_checkpoint."""
+    assert "model_checkpoint" in env_cfg, "model_checkpoint key missing from environment_constants.json"
+    assert "cogvideox_checkpoint" not in env_cfg, (
+        "cogvideox_checkpoint must be removed from environment_constants.json"
+    )
+
+
+# ── Test A: vae_compression block exists and has correct keys and values ───────
+def test_vae_compression_block(gen_cfg):
+    """vae_compression must exist and contain temporal=4, spatial_h=16, spatial_w=16."""
+    assert "vae_compression" in gen_cfg, "vae_compression block missing from generation_constants.json"
+    block = gen_cfg["vae_compression"]
+    assert block["temporal"] == 4, f"vae_compression.temporal must be 4, got {block['temporal']}"
+    assert block["spatial_h"] == 16, f"vae_compression.spatial_h must be 16, got {block['spatial_h']}"
+    assert block["spatial_w"] == 16, f"vae_compression.spatial_w must be 16, got {block['spatial_w']}"
+
+
+# ── Test B: generation_modes block exists and has correct values ───────────────
+def test_generation_modes_block(gen_cfg):
+    """generation_modes must have base_clip=T2V and extension_1=I2V."""
+    assert "generation_modes" in gen_cfg, "generation_modes block missing from generation_constants.json"
+    modes = gen_cfg["generation_modes"]
+    assert modes["base_clip"] == "T2V", f"generation_modes.base_clip must be 'T2V', got {modes['base_clip']!r}"
+    assert modes["extension_1"] == "I2V", f"generation_modes.extension_1 must be 'I2V', got {modes['extension_1']!r}"
+
+
+# ── Test C: seam_frames_raw_timeline ──────────────────────────────────────────
+def test_seam_frames_raw_timeline(gen_cfg):
+    """seam_frames_raw_timeline must be [145, 290]."""
+    assert gen_cfg["seam_frames_raw_timeline"] == [145, 290], (
+        f"seam_frames_raw_timeline must be [145, 290], got {gen_cfg['seam_frames_raw_timeline']}"
+    )
+
+
+# ── Test D: seam_frames_playable_timeline ─────────────────────────────────────
+def test_seam_frames_playable_timeline(gen_cfg):
+    """seam_frames_playable_timeline must be [138, 269]."""
+    assert gen_cfg["seam_frames_playable_timeline"] == [138, 269], (
+        f"seam_frames_playable_timeline must be [138, 269], got {gen_cfg['seam_frames_playable_timeline']}"
+    )
+
+
+# ── Test E: upscale_factor is 1.5 ─────────────────────────────────────────────
+def test_upscale_factor(gen_cfg):
+    """upscale_factor must be 1.5 (1280→1920, cleaner than old 2.67×)."""
+    assert gen_cfg["upscale_factor"] == 1.5, (
+        f"upscale_factor must be 1.5, got {gen_cfg['upscale_factor']}"
+    )
+
+
+# ── Test F: validate_environment.py exits 0 on valid config ───────────────────
+def test_validate_environment_exits_zero():
+    """validate_environment.py must exit with code 0 when config is valid."""
+    validate_script = Path(__file__).parent.parent / "validate_environment.py"
+    result = subprocess.run(
+        [sys.executable, str(validate_script)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"validate_environment.py exited with code {result.returncode}.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
+# ── Test G: quality_gates block is unchanged ──────────────────────────────────
+def test_quality_gates_unchanged(gen_cfg):
+    """quality_gates spot-check: flicker_index_reject and luminance_gate_min must be unchanged."""
+    gates = gen_cfg["quality_gates"]
+    assert gates["flicker_index_reject"] == 0.01, (
+        f"quality_gates.flicker_index_reject must be 0.01, got {gates['flicker_index_reject']}"
+    )
+    assert gates["luminance_gate_min"] == 0.30, (
+        f"quality_gates.luminance_gate_min must be 0.30, got {gates['luminance_gate_min']}"
     )

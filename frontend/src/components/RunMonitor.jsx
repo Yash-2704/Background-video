@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { submitGeneration, getRunStatus } from '../api/client.js'
 
+// 11 stages — no interpolation stage
+// (Wan2.2-TI2V-5B outputs 24fps natively)
 const PIPELINE_STAGES = [
   { key: 'prompt_compilation', label: 'Prompt Compilation' },
   { key: 'generation',         label: 'Video Generation'   },

@@ -38,7 +38,7 @@ const mockRunResult = {
   raw_loop_path:        'raw/bg_001_b2e7f3_raw_loop.mp4',
   seed:                 42819,
   seam_frames_raw:      [183, 366],
-  seam_frames_playable: [169, 338],
+  seam_frames_playable: [138, 269],
   stages: {
     prompt_compilation: 'complete',
     generation:         'complete',

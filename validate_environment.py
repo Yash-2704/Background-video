@@ -29,11 +29,15 @@ ENV_REQUIRED_KEYS = [
     "cuda_version",
     "torch_version",
     "diffusers_version",
-    "cogvideox_checkpoint",
-    "cogvideox_commit_hash",
+    "model_id",
+    "model_checkpoint",
+    "model_commit_hash",
+    "model_architecture",
+    "model_task",
     "upscaler",
     "upscaler_model_weights",
     "interpolation_method",
+    "interpolation_status",
     "temporal_probe_library",
     "ssim_library",
     "ffmpeg_version",
@@ -41,7 +45,7 @@ ENV_REQUIRED_KEYS = [
 
 GEN_REQUIRED_KEYS = [
     "model",
-    "tokenizer",
+    # "tokenizer" removed — not applicable to Wan2.2-TI2V-5B-Diffusers
     "sampler",
     "steps",
     "cfg_scale",
@@ -49,6 +53,9 @@ GEN_REQUIRED_KEYS = [
     "target_fps",
     "generate_resolution",
     "upscale_target",
+    "upscale_factor",
+    "vae_compression",
+    "generation_modes",
     "base_clip_duration_s",
     "base_clip_frames_native",
     "total_anchor_screen_time_s",
@@ -71,7 +78,7 @@ GEN_REQUIRED_KEYS = [
     "production_note",
 ]
 
-COGVIDEOX_UNSET_PLACEHOLDER = "UNSET \u2014 lock at first successful run"
+MODEL_COMMIT_HASH_UNSET_PLACEHOLDER = "[locked at first successful run]"
 
 # ── Result accumulator ───────────────────────────────────────────────────────
 results = []  # list of (status, label, detail) tuples
@@ -238,23 +245,86 @@ def check_cuda(env_cfg: Optional[dict]) -> None:
         record("WARN", "CUDA", "torch not installed — cannot check CUDA")
 
 
-# ── CHECK 5: CogVideoX commit hash ───────────────────────────────────────────
-def check_cogvideox_hash(env_cfg: Optional[dict]) -> None:
+# ── CHECK 5: Model checkpoint and commit hash ────────────────────────────────
+def check_model_hash(env_cfg: Optional[dict]) -> None:
     if env_cfg is None:
-        record("FAIL", "CogVideoX commit hash", "Cannot check — environment_constants.json not loaded")
+        record("FAIL", "Model checkpoint", "Cannot check — environment_constants.json not loaded")
+        record("FAIL", "Model commit hash", "Cannot check — environment_constants.json not loaded")
         return
 
-    commit_hash = env_cfg.get("cogvideox_commit_hash", "")
-    if commit_hash == COGVIDEOX_UNSET_PLACEHOLDER:
+    checkpoint = env_cfg.get("model_checkpoint", "")
+    if checkpoint and checkpoint != "[your local path to downloaded weights]":
+        record("PASS", "Model checkpoint", "set")
+    elif checkpoint == "[your local path to downloaded weights]":
+        record("WARN", "Model checkpoint", "placeholder not replaced — set path to downloaded weights")
+    else:
+        record("FAIL", "Model checkpoint", "key missing or empty")
+
+    commit_hash = env_cfg.get("model_commit_hash", "")
+    if commit_hash == MODEL_COMMIT_HASH_UNSET_PLACEHOLDER:
         record(
             "WARN",
-            "CogVideoX commit hash",
+            "Model commit hash",
             "not yet locked. Lock after first successful run.",
         )
     elif commit_hash:
-        record("PASS", "CogVideoX commit hash", "set")
+        record("PASS", "Model commit hash", "set")
     else:
-        record("FAIL", "CogVideoX commit hash", "key missing or empty")
+        record("FAIL", "Model commit hash", "key missing or empty")
+
+
+# ── CHECK 8: native_fps == 24 ────────────────────────────────────────────────
+def check_native_fps(gen_cfg: Optional[dict]) -> None:
+    if gen_cfg is None:
+        record("FAIL", "native_fps", "Cannot check — generation_constants.json not loaded")
+        return
+    fps = gen_cfg.get("native_fps")
+    if fps == 24:
+        record("PASS", "native_fps", "24 (Wan2.2-TI2V-5B native rate)")
+    else:
+        record(
+            "FAIL",
+            "native_fps",
+            f"expected 24, found {fps!r} — stale config from CogVideoX era?",
+        )
+
+
+# ── CHECK 9: vae_compression block ───────────────────────────────────────────
+def check_vae_compression(gen_cfg: Optional[dict]) -> None:
+    if gen_cfg is None:
+        record("FAIL", "vae_compression", "Cannot check — generation_constants.json not loaded")
+        return
+    block = gen_cfg.get("vae_compression")
+    if not isinstance(block, dict):
+        record("FAIL", "vae_compression", "key missing or not an object")
+        return
+    required_sub = ["temporal", "spatial_h", "spatial_w"]
+    missing = [k for k in required_sub if k not in block]
+    if missing:
+        record("FAIL", "vae_compression", f"missing sub-keys: {missing}")
+    else:
+        record(
+            "PASS",
+            "vae_compression",
+            f"temporal={block['temporal']}, spatial_h={block['spatial_h']}, spatial_w={block['spatial_w']}",
+        )
+
+
+# ── CHECK 10: interpolation status (RIFE present, crossfade-only role) ────────
+def check_interpolation_status(env_cfg: Optional[dict]) -> None:
+    if env_cfg is None:
+        record("FAIL", "interpolation_method", "Cannot check — environment_constants.json not loaded")
+        return
+    method = env_cfg.get("interpolation_method", "")
+    status = env_cfg.get("interpolation_status", "")
+    if "RIFE" in method:
+        record(
+            "PASS",
+            "interpolation_method",
+            f"{method} present — {status or 'status field missing'}",
+        )
+    else:
+        record("WARN", "interpolation_method", f"RIFE not found, got: {method!r}")
 
 
 # ── CHECK 6: Config files integrity ─────────────────────────────────────────
@@ -344,7 +414,10 @@ def main() -> None:
     check_package_versions(env_cfg)
     check_ffmpeg(env_cfg)
     check_cuda(env_cfg)
-    check_cogvideox_hash(env_cfg)
+    check_model_hash(env_cfg)
+    check_native_fps(gen_cfg)
+    check_vae_compression(gen_cfg)
+    check_interpolation_status(env_cfg)
     check_output_directory()
 
     exit_code = print_report()
