@@ -140,35 +140,116 @@ def generate_clip(
 
     else:
         # ── LIVE GENERATION ───────────────────────────────────────────────────
-        # Guard-import heavy dependencies so dry-run never requires them.
-        import torch                                     # noqa: F401
-        from diffusers import AutoencoderKLWan           # noqa: F401
-
-        # TODO: LIVE GENERATION — slot real Wan2.2-TI2V call here
-        # T2V pathway (clip_index == 0, conditioning_frame is None):
-        #   Use standard text-to-video pipeline
-        #   Required parameters (all from GENERATION_CONSTANTS):
-        #     model:           GENERATION_CONSTANTS["model"]
-        #     num_frames:      GENERATION_CONSTANTS["base_clip_frames_native"]  # 145
-        #     fps:             GENERATION_CONSTANTS["native_fps"]               # 24
-        #     resolution:      GENERATION_CONSTANTS["generate_resolution"]      # [1280, 720]
-        #     cfg_scale:       GENERATION_CONSTANTS["cfg_scale"]
-        #     steps:           GENERATION_CONSTANTS["steps"]
-        #     sampler:         GENERATION_CONSTANTS["sampler"]
-        #     seed:            seed  (passed in — not from constants)
-        #     vae_compression: GENERATION_CONSTANTS["vae_compression"]
-        #       → (frames - 1) % 4 == 0 must be satisfied: 145 ✓
+        # All heavy dependencies are guard-imported here so that this module
+        # imports cleanly on any machine without ML packages installed.
         #
-        # I2V pathway (clip_index > 0, conditioning_frame provided):
-        #   Use image-to-video pipeline
-        #   Additional parameter:
-        #     conditioning_frame: np.ndarray (last frame of previous clip, BGR format)
-        #   The model conditions on this frame natively —
-        #   no external workaround needed for Wan2.2-TI2V
-        raise NotImplementedError(
-            "Live Wan2.2-TI2V-5B generation not yet implemented. "
-            "Set dev_mode=true in generation_constants.json to use dry-run."
+        # Pipeline class names (verified against model_index.json):
+        #   T2V: WanPipeline               (diffusers ≥ 0.27.0)
+        #   I2V: WanImageToVideoPipeline   (diffusers ≥ 0.27.0)
+        #
+        # If diffusers raises ImportError for WanImageToVideoPipeline, the
+        # installed version predates Wan I2V support — upgrade diffusers.
+        import torch
+        from diffusers import (
+            DPMSolverMultistepScheduler,
+            WanImageToVideoPipeline,
+            WanPipeline,
         )
+        import PIL.Image
+
+        GC           = GENERATION_CONSTANTS
+        # Weights live in the Wan2.2-TI2V-5B-Diffusers subfolder, not Wan2.2/ root.
+        WEIGHTS_PATH = str(PROJECT_ROOT / "Wan2.2" / "Wan2.2-TI2V-5B-Diffusers")
+
+        # ── STEP 1: Load the appropriate pipeline ─────────────────────────────
+        if clip_index == 0:
+            # T2V pathway — base clip, no conditioning image
+            pipe = WanPipeline.from_pretrained(
+                WEIGHTS_PATH,
+                torch_dtype=torch.bfloat16,
+            )
+        else:
+            # I2V pathway — extension clips, conditioned on last frame of
+            # the previous clip.  conditioning_frame is BGR np.ndarray.
+            pipe = WanImageToVideoPipeline.from_pretrained(
+                WEIGHTS_PATH,
+                torch_dtype=torch.bfloat16,
+            )
+
+        # Memory-efficiency methods — mandatory on RTX 4090 for 5B at bfloat16.
+        pipe.enable_model_cpu_offload()
+        pipe.vae.enable_slicing()
+        pipe.vae.enable_tiling()
+
+        # ── STEP 2: Sampler — DPM++ 2M ────────────────────────────────────────
+        # GENERATION_CONSTANTS["sampler"] == "DPM++ 2M"
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+            pipe.scheduler.config
+        )
+
+        # ── STEP 3: Inference ─────────────────────────────────────────────────
+        generator = torch.Generator(device="cuda").manual_seed(seed)
+
+        if conditioning_frame is None:
+            # T2V: text-only conditioning
+            output = pipe(
+                prompt=f"{positive}, {motion}",
+                negative_prompt=negative,
+                num_frames=GC["base_clip_frames_native"],   # 145 — satisfies (n-1)%4==0
+                height=GC["generate_resolution"][1],         # 720
+                width=GC["generate_resolution"][0],          # 1280
+                guidance_scale=GC["cfg_scale"],              # 6.0
+                num_inference_steps=GC["steps"],             # 50
+                generator=generator,
+            )
+        else:
+            # I2V: image conditioning.
+            # conditioning_frame arrives in BGR format (cv2 convention) —
+            # convert to RGB PIL Image before passing to the pipeline.
+            frame_rgb = cv2.cvtColor(conditioning_frame, cv2.COLOR_BGR2RGB)
+            pil_image = PIL.Image.fromarray(frame_rgb)
+
+            output = pipe(
+                image=pil_image,
+                prompt=f"{positive}, {motion}",
+                negative_prompt=negative,
+                num_frames=GC["base_clip_frames_native"],
+                height=GC["generate_resolution"][1],
+                width=GC["generate_resolution"][0],
+                guidance_scale=GC["cfg_scale"],
+                num_inference_steps=GC["steps"],
+                generator=generator,
+            )
+
+        # ── STEP 4: Write frames to output_path via cv2.VideoWriter ──────────
+        # output.frames[0] is a list of PIL Images in RGB order.
+        frames = output.frames[0]
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(
+            str(output_path),
+            fourcc,
+            float(GC["native_fps"]),                        # 24.0
+            (GC["generate_resolution"][0], GC["generate_resolution"][1]),  # (1280, 720)
+        )
+        if not writer.isOpened():
+            raise RuntimeError(
+                f"cv2.VideoWriter failed to open for live output: {output_path}"
+            )
+
+        for pil_frame in frames:
+            frame_np  = np.array(pil_frame)                 # RGB uint8
+            frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+            writer.write(frame_bgr)
+
+        writer.release()
+
+        if not output_path.exists():
+            raise RuntimeError(
+                f"generate_clip() live: output file was not created at {output_path}"
+            )
+
+        return output_path
 
 
 # ── crossfade_join() ───────────────────────────────────────────────────────────
@@ -256,6 +337,8 @@ def crossfade_join(
 
             for j in range(cf):
                 frame_pos = window_start + j               # index in output_frames
+                if frame_pos >= len(output_frames):        # safety: short test clips
+                    break
                 alpha     = j / (cf - 1) if cf > 1 else 1.0
 
                 frame_out = output_frames[frame_pos].astype(np.float32)
@@ -289,20 +372,203 @@ def crossfade_join(
         }
 
     else:
-        # TODO: LIVE CROSSFADE JOIN — slot real Wan2.2-TI2V + FFmpeg 6.0 call here
-        # Required parameters (all from GENERATION_CONSTANTS):
-        #   crossfade_frames:  GENERATION_CONSTANTS["crossfade_frames"]
-        #   native_fps:        GENERATION_CONSTANTS["native_fps"]
-        #   seam_count:        GENERATION_CONSTANTS["seam_count"]
-        #   clip_paths:        clip_paths (passed in — 3 native 24fps clips)
-        #   output_path:       output_path (passed in)
-        # Approach:
-        #   1. RIFE 4.6 optical-flow blend for crossfade windows
-        #   2. FFmpeg 6.0 concat + overlay filter for final assembly
-        raise NotImplementedError(
-            "Live crossfade join not yet implemented. "
-            "Set dev_mode=true in generation_constants.json to use dry-run."
-        )
+        # ── LIVE CROSSFADE JOIN ───────────────────────────────────────────────
+        # Guard-import stdlib modules so module-level imports stay ML-free.
+        import subprocess
+        import sys
+        import tempfile
+
+        GC         = GENERATION_CONSTANTS
+        native_fps = GC["native_fps"]                      # 24
+        cf         = GC["crossfade_frames"]                # 14
+        seam_count = GC["seam_count"]                      # 2
+        fpc        = GC["base_clip_frames_native"]         # 145
+
+        RIFE_DIR    = PROJECT_ROOT / "Practical-RIFE"
+        RIFE_MODEL  = RIFE_DIR / "train_log"
+        RIFE_SCRIPT = RIFE_DIR / "inference_video.py"
+
+        seam_frames_playable = GC["seam_frames_playable_timeline"]   # [138, 269]
+        playable_frames      = GC["total_playable_frames"]            # 406
+        seams_raw            = [fpc * (i + 1) for i in range(seam_count)]  # [145, 290]
+
+        # ── Local helpers ─────────────────────────────────────────────────────
+
+        def _ffmpeg(*args_list):
+            """Run FFmpeg with -y, capture output, raise RuntimeError on failure."""
+            result = subprocess.run(
+                ["ffmpeg", "-y", *args_list],
+                capture_output=True,
+                cwd=str(PROJECT_ROOT),
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"FFmpeg failed (exit {result.returncode}):\n"
+                    f"{result.stderr.decode(errors='replace')}"
+                )
+
+        def _read_frame(video_path, frame_idx):
+            """Read a single frame from a video by 0-based index using cv2."""
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                raise RuntimeError(f"cv2.VideoCapture failed: {video_path}")
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                raise RuntimeError(
+                    f"Failed to read frame {frame_idx} from {video_path}"
+                )
+            return frame
+
+        def _write_segment(src_path, start_frame, num_frames, dst_path):
+            """Extract num_frames frames starting at start_frame into a new mp4v file."""
+            cap = cv2.VideoCapture(str(src_path))
+            if not cap.isOpened():
+                raise RuntimeError(f"cv2.VideoCapture failed: {src_path}")
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(str(dst_path), fourcc, float(native_fps), (w, h))
+            if not writer.isOpened():
+                cap.release()
+                raise RuntimeError(f"cv2.VideoWriter failed: {dst_path}")
+            for _ in range(num_frames):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                writer.write(frame)
+            cap.release()
+            writer.release()
+
+        def _run_rife(input_mp4, output_mp4):
+            """
+            Run Practical-RIFE on a 2-frame input video to produce a
+            crossfade segment of exactly cf=14 frames via optical flow.
+
+            Frame math:
+                2 input frames, 1 pair → RIFE writes:
+                  lastframe(I0) + (multi-1) intermediates + lastframe(I1)
+                  = multi + 1 total frames
+                With --multi=cf-1=13 → 13+1 = 14 output frames ✓
+
+            --fps native_fps overrides RIFE's default of (source_fps × multi),
+            which would otherwise produce a spurious 312fps output container.
+
+            NOTE: sys.executable assumes RIFE dependencies (torch, skvideo)
+            are installed in the current Python env. On a GPU machine with a
+            separate RIFE venv, replace sys.executable with that env's python.
+            """
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(RIFE_SCRIPT),
+                    "--video", str(input_mp4),
+                    "--output", str(output_mp4),
+                    "--model", str(RIFE_MODEL),
+                    "--multi", str(cf - 1),        # 13 → yields cf=14 frames
+                    "--fps",   str(native_fps),    # keep output at 24fps
+                ],
+                capture_output=True,
+                cwd=str(PROJECT_ROOT),
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Practical-RIFE failed (exit {result.returncode}):\n"
+                    f"{result.stderr.decode(errors='replace')}"
+                )
+
+        # ── Phase 1: RIFE optical-flow blend for each seam ───────────────────
+        #
+        # For each seam at raw position S = fpc*(seam_idx+1):
+        #   Boundary frame A = outgoing_clip[S - cf]  (first frame of outgoing window)
+        #   Boundary frame B = incoming_clip[cf - 1]  (last frame of incoming window)
+        #   A 2-frame input video [A, B] → RIFE → 14-frame crossfade segment
+        #
+        # This produces an optical-flow morph from the outgoing window entry
+        # to the incoming window exit, matching the alpha ramp of the dry-run
+        # linear blend but with motion-compensated intermediate frames.
+
+        with tempfile.TemporaryDirectory() as _tmpdir:
+            tmp = Path(_tmpdir)
+            rife_segs = []
+
+            for seam_idx in range(seam_count):
+                seam          = seams_raw[seam_idx]          # 145 or 290
+                outgoing_clip = clip_paths[seam_idx]         # clip_0 or clip_1
+                incoming_clip = clip_paths[seam_idx + 1]     # clip_1 or clip_2
+                seam_tmp      = tmp / f"seam_{seam_idx}"
+                seam_tmp.mkdir()
+
+                # Extract the two boundary frames
+                frame_a = _read_frame(outgoing_clip, seam - cf)  # outgoing window start
+                frame_b = _read_frame(incoming_clip, cf - 1)     # incoming window end
+                h, w    = frame_a.shape[:2]
+
+                # Write 2-frame input video for RIFE (mp4v, same codec as source clips)
+                rife_in = seam_tmp / "rife_in.mp4"
+                fourcc  = cv2.VideoWriter_fourcc(*"mp4v")
+                writer  = cv2.VideoWriter(str(rife_in), fourcc, float(native_fps), (w, h))
+                if not writer.isOpened():
+                    raise RuntimeError(f"cv2.VideoWriter failed: {rife_in}")
+                writer.write(frame_a)
+                writer.write(frame_b)
+                writer.release()
+
+                # Run RIFE → cf=14 frame optical-flow crossfade segment
+                rife_out = seam_tmp / "rife_out.mp4"
+                _run_rife(rife_in, rife_out)
+                rife_segs.append(rife_out)
+
+            # ── Phase 2: FFmpeg concat assembly ──────────────────────────────
+            #
+            # Segment layout — total = 3 × fpc = 435 frames, seams at [145, 290]:
+            #
+            #   seg0  │ clip_0 frames [0 .. fpc-cf-1]   │ fpc-cf=131 frames
+            #   seg1  │ RIFE crossfade seam 0            │ cf=14 frames  → seam at 145
+            #   seg2  │ clip_1 frames [0 .. fpc-cf-1]   │ fpc-cf=131 frames
+            #   seg3  │ RIFE crossfade seam 1            │ cf=14 frames  → seam at 290
+            #   seg4  │ clip_2 frames [0 .. fpc-1]      │ fpc=145 frames
+            #
+            # Total: (fpc-cf) + cf + (fpc-cf) + cf + fpc = 3*fpc = 435 ✓
+            # Seam 1: (fpc-cf) + cf = fpc = 145 ✓
+            # Seam 2: (fpc-cf) + cf + (fpc-cf) + cf = 2*fpc = 290 ✓
+            #
+            # clip_1[0..cf-1] appears both inside the RIFE segment (as frame_b
+            # boundary) and at the start of seg2 — this mirrors the dry-run
+            # behaviour where the incoming clip plays from frame 0 after the seam.
+
+            seg0 = tmp / "seg0.mp4"
+            seg2 = tmp / "seg2.mp4"
+            _write_segment(clip_paths[0], 0, fpc - cf, seg0)   # clip_0[0..130]
+            _write_segment(clip_paths[1], 0, fpc - cf, seg2)   # clip_1[0..130]
+
+            all_segs = [seg0, rife_segs[0], seg2, rife_segs[1], clip_paths[2]]
+
+            concat_list = tmp / "concat.txt"
+            with concat_list.open("w", encoding="utf-8") as fh:
+                for seg in all_segs:
+                    # Use absolute paths; -safe 0 allows them in the concat list.
+                    fh.write(f"file '{seg.resolve()}'\n")
+
+            _ffmpeg(
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list),
+                "-c", "copy",            # all segments are mp4v — no re-encode needed
+                str(output_path),
+            )
+
+            total_frames_raw = fpc * 3   # 435
+
+            return {
+                "raw_loop_path":        output_path,
+                "seam_frames_raw":      [seams_raw[0], seams_raw[1]],
+                "seam_frames_playable": seam_frames_playable,
+                "total_frames_raw":     total_frames_raw,
+                "playable_frames":      playable_frames,
+            }
 
 
 # ── run_generation() ───────────────────────────────────────────────────────────

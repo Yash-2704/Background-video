@@ -1,5 +1,4 @@
-const API_BASE = 'http://localhost:8000'
-
+const API_BASE = 'http://100.92.126.27:8000'
 export async function compilePrompts(formData) {
   let response
   try {
@@ -76,4 +75,8 @@ export async function fetchBundleFile(clip_id, filename) {
   }
 
   return response.json()
+}
+
+export function getMediaUrl(clip_id, filename) {
+  return `${API_BASE}/api/v1/media/${clip_id}/${filename}`
 }

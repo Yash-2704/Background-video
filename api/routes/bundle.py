@@ -126,3 +126,43 @@ def serve_bundle_file(clip_id: str, filename: str) -> FileResponse:
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     return FileResponse(path=str(file_path), media_type="application/json")
+
+
+# ── Media-serving endpoint ─────────────────────────────────────────────────────
+
+def _allowed_media_filenames(clip_id: str) -> dict:
+    """Return mapping of permitted media filenames → media_type."""
+    return {
+        f"{clip_id}.mp4":          "video/mp4",
+        f"{clip_id}_preview.gif":  "image/gif",
+    }
+
+
+@router.get("/media/{clip_id}/{filename}")
+def serve_media_file(clip_id: str, filename: str):
+    """
+    Serve the final .mp4 or preview .gif for a completed run.
+
+    Permitted filenames:
+      {clip_id}.mp4
+      {clip_id}_preview.gif
+
+    Files are served from:  output/{clip_id}/final/{filename}
+    Returns 400 if filename is not whitelisted or contains path traversal.
+    Returns 404 if the file does not exist on disk.
+    """
+    # Path traversal guard
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    allowed = _allowed_media_filenames(clip_id)
+    if filename not in allowed:
+        raise HTTPException(status_code=400, detail="Filename not permitted")
+
+    file_path = _PROJECT_ROOT / "output" / clip_id / "final" / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    media_type = allowed[filename]
+    headers = {"Accept-Ranges": "bytes"} if media_type == "video/mp4" else {}
+    return FileResponse(path=str(file_path), media_type=media_type, headers=headers)

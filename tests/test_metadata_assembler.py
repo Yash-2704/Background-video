@@ -88,7 +88,7 @@ def dry_run_generation_result(tmp_path):
 
 
 @pytest.fixture
-def dry_post_result(tmp_path, canonical_compiled, dry_decode):
+def dry_post_result(tmp_path, canonical_compiled, dry_decode, dry_temporal):
     """
     Integration fixture: real files on disk from run_generation() + run_post_processing().
     The assembler will be able to verify these paths exist.
@@ -102,6 +102,7 @@ def dry_post_result(tmp_path, canonical_compiled, dry_decode):
         seam_frames_playable=gen_result["seam_frames_playable"],
         output_dir=tmp_path,
         dry_run=True,
+        temporal_probe=dry_temporal,
     )
     return post
 
@@ -120,6 +121,7 @@ def integration_bundle(tmp_path, canonical_compiled, dry_decode, dry_temporal, d
         seam_frames_playable=gen_result["seam_frames_playable"],
         output_dir=tmp_path,
         dry_run=True,
+        temporal_probe=dry_temporal,
     )
     return {
         "clip_id":           _CLIP_ID,
@@ -784,6 +786,33 @@ def test_49_generation_block_contains_generation_mode_by_clip(
     assert "generation_mode_by_clip" in meta["generation"]
     assert meta["generation"]["generation_mode_by_clip"]["base_clip"] == "T2V"
     assert meta["generation"]["generation_mode_by_clip"]["extension_1"] == "I2V"
+
+
+def test_50_metadata_files_decode_probe_not_missing(integration_bundle):
+    """
+    End-to-end: after run_metadata_assembly(), files.decode_probe in metadata.json
+    must not be 'MISSING' — it must point to the written probe JSON on disk.
+    """
+    b = integration_bundle
+    result = run_metadata_assembly(
+        clip_id=b["clip_id"], run_number=1,
+        compiled=b["compiled"],
+        generation_result=b["gen_result"],
+        decode_probe=b["decode"],
+        temporal_probe=b["temporal"],
+        gate_result=b["gates"],
+        post_result=b["post"],
+        output_dir=b["tmp_path"],
+    )
+    files = result["metadata"]["files"]
+    assert files["decode_probe"] != "MISSING", (
+        "files.decode_probe is still 'MISSING' — probe JSON not written to disk"
+    )
+    assert files["temporal_probe"] != "MISSING", (
+        "files.temporal_probe is still 'MISSING' — probe JSON not written to disk"
+    )
+    assert Path(files["decode_probe"]).exists()
+    assert Path(files["temporal_probe"]).exists()
 
 
 def test_47_prompt_compiler_tests_still_pass():

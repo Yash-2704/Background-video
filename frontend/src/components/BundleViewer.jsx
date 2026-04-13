@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { fetchBundleFile } from '../api/client.js'
 
+const _MEDIA_BASE = 'http://localhost:8000/api/v1/media'
+function _mediaUrl(clip_id, filename) {
+  return `${_MEDIA_BASE}/${clip_id}/${filename}`
+}
+
 // ── Tab definitions ────────────────────────────────────────────────────────────
 
 const VIEWER_TABS = [
@@ -94,8 +99,45 @@ function MetadataPanel({ data }) {
     ? `${pp.positive_hash.slice(0, 8)}...`
     : '—'
 
+  const files = data.files || {}
+  const finalPath   = files.final   && files.final   !== 'MISSING' ? files.final   : null
+  const previewPath = files.preview && files.preview !== 'MISSING' ? files.preview : null
+  const videoFilename = finalPath   ? finalPath.split('/').pop()   : null
+  const gifFilename   = previewPath ? previewPath.split('/').pop() : null
+  const videoUrl = videoFilename ? _mediaUrl(data.clip_id, videoFilename) : null
+  const gifUrl   = gifFilename   ? _mediaUrl(data.clip_id, gifFilename)   : null
+
   return (
     <div className="tab-panel">
+
+      {videoUrl && (
+        <section className="video-preview-section">
+          <h3 className="video-preview-title">Final Composite</h3>
+          <video
+            className="video-player"
+            src={videoUrl}
+            controls
+            loop
+            playsInline
+            data-testid="final-video-player"
+          />
+          <p className="video-preview-label">
+            {data.clip_id} · {g.playable_duration_s}s · {g.native_fps}fps · loop
+          </p>
+        </section>
+      )}
+
+      {gifUrl && (
+        <section className="gif-preview-section">
+          <h3 className="video-preview-title">Preview GIF (3-segment)</h3>
+          <img
+            className="gif-player"
+            src={gifUrl}
+            alt="Three-segment preview GIF"
+            data-testid="preview-gif"
+          />
+        </section>
+      )}
 
       <SectionHeader title="Run Info" />
       <InfoRow label="Clip ID"          value={data.clip_id} />
@@ -158,6 +200,21 @@ function MetadataPanel({ data }) {
         label="Masks Generated"
         value={Array.isArray(po.masks_generated) ? po.masks_generated.join(', ') : po.masks_generated}
       />
+
+      <SectionHeader title="Files" />
+      {(() => {
+        const f = data.files || {}
+        return (
+          <>
+            <InfoRow label="Raw Loop"       value={f.raw_loop} />
+            <InfoRow label="Upscaled"       value={f.upscaled} />
+            <InfoRow label="Decode Probe"   value={f.decode_probe} />
+            <InfoRow label="Temporal Probe" value={f.temporal_probe} />
+            <InfoRow label="Final"          value={f.final} />
+            <InfoRow label="Preview"        value={f.preview} />
+          </>
+        )
+      })()}
     </div>
   )
 }

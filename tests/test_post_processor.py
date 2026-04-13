@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from core.generator import run_generation
-from core.probes import run_decode_probe
+from core.probes import run_decode_probe, run_temporal_probe
 from core.post_processor import (
     UPSCALE_TARGET,
     upscale_clip,
@@ -65,6 +65,12 @@ def seam_frames():
 def passing_decode():
     """Dry-run decode probe result — mean_luminance=0.46."""
     return run_decode_probe(Path("nonexistent.mp4"), dry_run=True)
+
+
+@pytest.fixture(scope="module")
+def passing_temporal():
+    """Dry-run temporal probe result."""
+    return run_temporal_probe(Path("nonexistent.mp4"), dry_run=True)
 
 
 @pytest.fixture(scope="module")
@@ -402,7 +408,7 @@ def test_preview_seam_frames_in_manifest(composite_for_preview, seam_frames, tmp
 # ── run_post_processing integration tests (32–38) ───────────────────────────────
 
 @pytest.fixture(scope="module")
-def post_result(synthetic_raw_loop, passing_decode, compiled_dict, seam_frames, tmp_path_factory):
+def post_result(synthetic_raw_loop, passing_decode, passing_temporal, compiled_dict, seam_frames, tmp_path_factory):
     """Full dry-run run_post_processing() result."""
     tmp = tmp_path_factory.mktemp("post")
     return run_post_processing(
@@ -413,6 +419,7 @@ def post_result(synthetic_raw_loop, passing_decode, compiled_dict, seam_frames, 
         seam_frames_playable=seam_frames,
         output_dir=tmp,
         dry_run=True,
+        temporal_probe=passing_temporal,
     )
 
 
@@ -441,7 +448,7 @@ def test_post_processing_all_file_paths_exist(post_result):
 
 
 def test_luts_generated_always_contains_neutral(
-    synthetic_raw_loop, passing_decode, seam_frames, tmp_path
+    synthetic_raw_loop, passing_decode, passing_temporal, seam_frames, tmp_path
 ):
     """neutral must be generated even when selected_lut is also neutral."""
     compiled_neutral = {
@@ -460,6 +467,7 @@ def test_luts_generated_always_contains_neutral(
         seam_frames_playable=seam_frames,
         output_dir=tmp_path,
         dry_run=True,
+        temporal_probe=passing_temporal,
     )
     assert "neutral" in result["luts_generated"]
     # No duplicates
@@ -475,7 +483,7 @@ def test_risks_dict_has_exactly_3_positions(post_result):
 
 
 def test_missing_raw_loop_raises_file_not_found(
-    passing_decode, compiled_dict, seam_frames, tmp_path
+    passing_decode, passing_temporal, compiled_dict, seam_frames, tmp_path
 ):
     with pytest.raises(FileNotFoundError, match="raw_loop not found"):
         run_post_processing(
@@ -486,11 +494,12 @@ def test_missing_raw_loop_raises_file_not_found(
             seam_frames_playable=seam_frames,
             output_dir=tmp_path,
             dry_run=True,
+            temporal_probe=passing_temporal,
         )
 
 
 def test_risk_json_files_written_as_valid_json(
-    synthetic_raw_loop, passing_decode, compiled_dict, seam_frames, tmp_path
+    synthetic_raw_loop, passing_decode, passing_temporal, compiled_dict, seam_frames, tmp_path
 ):
     result = run_post_processing(
         clip_id="risk_json_test",
@@ -500,6 +509,7 @@ def test_risk_json_files_written_as_valid_json(
         seam_frames_playable=seam_frames,
         output_dir=tmp_path,
         dry_run=True,
+        temporal_probe=passing_temporal,
     )
     # Risk JSON files live in masks/
     upscaled_path = Path(result["upscaled"])
@@ -511,6 +521,35 @@ def test_risk_json_files_written_as_valid_json(
             data = json.load(fh)
         assert "flag" in data
         assert "dev_phase_behavior" in data
+
+
+# ── Probe JSON persistence tests (40–43) ────────────────────────────────────────
+
+def test_decode_probe_json_file_exists(post_result):
+    """decode_probe.json must exist on disk after run_post_processing()."""
+    assert Path(post_result["decode_probe_path"]).exists()
+
+
+def test_temporal_probe_json_file_exists(post_result):
+    """temporal_probe.json must exist on disk after run_post_processing()."""
+    assert Path(post_result["temporal_probe_path"]).exists()
+
+
+def test_probe_json_files_parse_as_valid_json(post_result):
+    """Both probe JSON files must parse without error."""
+    for key in ("decode_probe_path", "temporal_probe_path"):
+        with Path(post_result[key]).open("r") as fh:
+            data = json.load(fh)
+        assert isinstance(data, dict), f"Expected dict for {key}"
+
+
+def test_probe_json_files_in_raw_subdirectory(post_result):
+    """Both probe JSON files must live inside the bundle's raw/ subdirectory."""
+    upscaled_dir = Path(post_result["upscaled"]).parent  # .../clip_id/raw/
+    decode_path  = Path(post_result["decode_probe_path"])
+    temporal_path = Path(post_result["temporal_probe_path"])
+    assert decode_path.parent == upscaled_dir, "decode_probe.json not in raw/"
+    assert temporal_path.parent == upscaled_dir, "temporal_probe.json not in raw/"
 
 
 # ── Regression test (39) ────────────────────────────────────────────────────────

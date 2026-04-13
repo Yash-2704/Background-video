@@ -315,3 +315,50 @@
   font-style: italic;
   padding: 0.5rem 0;
 }
+
+/* ── Video preview section ───────────────────────────────────────────────────── */
+
+.video-preview-section {
+  margin: 0 0 2rem 0;
+  padding: 1.5rem;
+  background: var(--surface-2, #1a1a2e);
+  border-radius: 8px;
+  border: 1px solid var(--border, #2a2a4a);
+}
+
+.video-preview-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #8888aa);
+  margin: 0 0 1rem 0;
+}
+
+.video-player {
+  width: 100%;
+  max-height: 480px;
+  border-radius: 4px;
+  background: #000;
+  display: block;
+}
+
+.video-preview-label {
+  font-size: 0.75rem;
+  color: var(--text-muted, #8888aa);
+  margin: 0.5rem 0 0 0;
+}
+
+.gif-preview-section {
+  margin: 0 0 2rem 0;
+  padding: 1.5rem;
+  background: var(--surface-2, #1a1a2e);
+  border-radius: 8px;
+  border: 1px solid var(--border, #2a2a4a);
+}
+
+.gif-player {
+  width: 100%;
+  border-radius: 4px;
+  display: block;
+}

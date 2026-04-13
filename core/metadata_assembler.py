@@ -68,8 +68,8 @@ def _build_files_section(
     Sources:
       raw_loop       — generation_result["raw_loop_path"] (passed through)
       upscaled       — post_result["upscaled"]
-      decode_probe   — not yet written (TODO: Prompt 11 adds probe JSON export)
-      temporal_probe — not yet written (TODO: Prompt 11 adds probe JSON export)
+      decode_probe   — post_result["decode_probe_path"] (written by post_processor)
+      temporal_probe — post_result["temporal_probe_path"] (written by post_processor)
       masks          — post_result["masks"].values()
       luts           — post_result["graded_variants"].values()
       final          — post_result["final"]
@@ -81,11 +81,9 @@ def _build_files_section(
     # upscaled — from post_result
     upscaled = _check_path(post_result.get("upscaled"))
 
-    # decode_probe / temporal_probe — not yet written in dev phase
-    # TODO (Prompt 11): post_processor should write probe JSONs so these paths
-    # can be populated. Until then, both will always be "MISSING".
-    decode_probe_file   = "MISSING"
-    temporal_probe_file = "MISSING"
+    # decode_probe / temporal_probe — written by run_post_processing() into raw/
+    decode_probe_file   = _check_path(post_result.get("decode_probe_path"))
+    temporal_probe_file = _check_path(post_result.get("temporal_probe_path"))
 
     # masks — list of paths from post_result["masks"] values
     masks = [

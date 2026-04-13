@@ -265,6 +265,7 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
             seam_frames_playable=gen_result["seam_frames_playable"],
             output_dir=OUTPUT_DIR,
             dry_run=DRY_RUN,
+            temporal_probe=temporal_probe,
         )
 
         _set_stage(run_id, "upscale",         "complete")

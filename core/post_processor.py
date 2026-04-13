@@ -32,6 +32,7 @@ Live mode (dry_run=False):
 
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -121,21 +122,129 @@ def upscale_clip(
         return output_path
 
     else:
-        # TODO: LIVE UPSCALE — Real-ESRGAN-Video call
-        # Required binary: realesr-general-wdn-x4v3 (Real-ESRGAN v3 model)
-        # Target resolution: UPSCALE_TARGET = [1920, 1080]
-        # Command pattern:
-        #   realesrgan-ncnn-vulkan -i {input_path} -o {output_path}
-        #     -n realesr-general-wdn-x4v3 -s 4
-        #   then crop/pad to exact UPSCALE_TARGET dimensions via FFmpeg
-        # Luminance calibration post-upscale:
-        #   FFmpeg eq filter: eq=brightness={lum_factor - 1.0}
-        # Set dry_run=True to use cv2-based placeholder upscale.
-        raise NotImplementedError(
-            "Live upscale not yet implemented. "
-            "Requires realesr-general-wdn-x4v3 binary (Real-ESRGAN). "
-            "Set dry_run=True to use cv2 LANCZOS4 placeholder upscale."
+        # ── Live upscale: Real-ESRGAN → FFmpeg scale → FFmpeg eq ───────────────
+        _MODEL_NAME  = GENERATION_CONSTANTS.get("upscaler_model_weights", "realesr-general-wdn-x4v3")
+        _BINARY_PATH = PROJECT_ROOT / "realesrgan" / "realesrgan-ncnn-vulkan"
+
+        if not _BINARY_PATH.exists():
+            raise RuntimeError(
+                f"upscale_clip: Real-ESRGAN binary not found: {_BINARY_PATH}"
+            )
+
+        # Luminance calibration factor (mirrors dry_run branch exactly)
+        mean_lum = decode_probe.get("mean_luminance", 0.46)
+        if mean_lum <= 0:
+            mean_lum = 0.46
+        lum_factor = float(np.clip(0.46 / mean_lum, 0.5, 2.0))
+
+        target_w, target_h = UPSCALE_TARGET[0], UPSCALE_TARGET[1]
+
+        # Probe source FPS via ffprobe so merged video has correct frame rate
+        _fps_probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=r_frame_rate",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(input_path),
+            ],
+            capture_output=True,
         )
+        _fps_str = _fps_probe.stdout.decode(errors="replace").strip()
+        try:
+            if "/" in _fps_str:
+                _n, _d = _fps_str.split("/")
+                _src_fps = float(_n) / float(_d)
+            else:
+                _src_fps = float(_fps_str)
+            if _src_fps <= 0:
+                raise ValueError("non-positive fps")
+        except Exception:
+            _src_fps = float(TARGET_FPS)
+
+        with tempfile.TemporaryDirectory() as _tmpdir:
+            _tmp        = Path(_tmpdir)
+            _frames_in  = _tmp / "frames_in"
+            _frames_out = _tmp / "frames_out"
+            _scaled_mp4 = _tmp / "scaled.mp4"
+            _frames_in.mkdir()
+            _frames_out.mkdir()
+
+            # Phase 1a — extract frames from input video
+            _extract = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", str(input_path),
+                    "-qscale:v", "1", "-qmin", "1", "-qmax", "1", "-vsync", "0",
+                    str(_frames_in / "frame%08d.jpg"),
+                ],
+                capture_output=True,
+            )
+            if _extract.returncode != 0:
+                raise RuntimeError(
+                    "upscale_clip: FFmpeg frame extraction failed:\n"
+                    + _extract.stderr.decode(errors="replace")
+                )
+
+            # Phase 1b — run Real-ESRGAN on extracted frames folder
+            _esrgan = subprocess.run(
+                [
+                    str(_BINARY_PATH),
+                    "-i", str(_frames_in),
+                    "-o", str(_frames_out),
+                    "-n", _MODEL_NAME,
+                    "-s", "4",
+                    "-f", "jpg",
+                ],
+                capture_output=True,
+            )
+            if _esrgan.returncode != 0:
+                raise RuntimeError(
+                    "upscale_clip: Real-ESRGAN failed:\n"
+                    + _esrgan.stderr.decode(errors="replace")
+                )
+
+            # Phase 1c — merge upscaled frames back to video, scaling to exact target
+            _merge = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-framerate", str(_src_fps),
+                    "-i", str(_frames_out / "frame%08d.jpg"),
+                    "-vf", f"scale={target_w}:{target_h}:flags=lanczos",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                    str(_scaled_mp4),
+                ],
+                capture_output=True,
+            )
+            if _merge.returncode != 0:
+                raise RuntimeError(
+                    "upscale_clip: FFmpeg frame merge failed:\n"
+                    + _merge.stderr.decode(errors="replace")
+                )
+
+            # Phase 2 — luminance calibration via FFmpeg eq filter
+            if abs(lum_factor - 1.0) < 1e-9:
+                # No calibration needed — copy scaled video directly to output
+                shutil.copy2(str(_scaled_mp4), str(output_path))
+            else:
+                _brightness = lum_factor - 1.0
+                _eq = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-i", str(_scaled_mp4),
+                        "-vf", f"eq=brightness={_brightness:.4f}",
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                        str(output_path),
+                    ],
+                    capture_output=True,
+                )
+                if _eq.returncode != 0:
+                    raise RuntimeError(
+                        "upscale_clip: FFmpeg eq calibration failed:\n"
+                        + _eq.stderr.decode(errors="replace")
+                    )
+
+        return output_path
 
 
 # ── generate_anchor_mask() ──────────────────────────────────────────────────────
@@ -380,20 +489,50 @@ def apply_lut_grade(
         return output_path
 
     else:
-        # TODO: LIVE LUT GRADING — FFmpeg lut3d filter
-        # Required tool: FFmpeg 6.0
-        # .cube file path: PROJECT_ROOT / "luts" / f"{lut_name}.cube"
-        # Filter chain: lut3d={cube_path}
-        # Full command:
-        #   ffmpeg -i {input_path} -vf "lut3d={cube_path}" -c:v libx264 \
-        #     -preset fast -crf 18 {output_path}
-        # Set dry_run=True to use cv2 channel-shift placeholder.
-        raise NotImplementedError(
-            f"Live LUT grading not yet implemented for '{lut_name}'. "
-            f"Requires FFmpeg 6.0 lut3d filter and a .cube file at "
-            f"<project_root>/luts/{lut_name}.cube. "
-            "Set dry_run=True to use cv2 channel-shift placeholder."
-        )
+        # ── Live LUT grading — FFmpeg lut3d filter ─────────────────────────────
+        cube_path = PROJECT_ROOT / "luts" / f"{lut_name}.cube"
+        if not cube_path.exists():
+            raise FileNotFoundError(
+                f"LUT file not found: {cube_path}\n"
+                f"Run `python3 luts/generate_luts.py` from the project root "
+                f"to generate all required .cube files."
+            )
+
+        # FFmpeg lut3d on macOS requires forward slashes and no spaces in path.
+        cube_str = str(cube_path).replace("\\", "/")
+        _tmp_cube = None
+        if " " in cube_str:
+            import tempfile as _tempfile
+            _tmp_cube = Path(_tempfile.mktemp(suffix=f"_{lut_name}.cube"))
+            shutil.copy2(cube_path, _tmp_cube)
+            cube_str = str(_tmp_cube).replace("\\", "/")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(input_path),
+            "-vf", f"lut3d={cube_str}",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "18",
+            str(output_path),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        finally:
+            if _tmp_cube is not None and _tmp_cube.exists():
+                _tmp_cube.unlink()
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"FFmpeg lut3d failed for '{lut_name}' "
+                f"(exit {proc.returncode}):\n"
+                + proc.stderr.decode("utf-8", errors="replace")
+            )
+        return output_path
 
 
 # ── composite_final() ───────────────────────────────────────────────────────────
@@ -455,19 +594,23 @@ def composite_final(
         return output_path
 
     else:
-        # TODO: LIVE COMPOSITE — FFmpeg overlay filter
-        # Required tool: FFmpeg 6.0
-        # The mask PNG must be used as a grayscale multiply layer.
-        # Filter chain (using movie + multiply blend):
-        #   ffmpeg -i {graded_path} -i {mask_path}
-        #     -filter_complex "[0:v][1:v]blend=all_mode=multiply"
-        #     -c:v libx264 -preset fast -crf 18 {output_path}
-        # Set dry_run=True to use cv2 numpy-multiply placeholder.
-        raise NotImplementedError(
-            "Live composite not yet implemented. "
-            "Requires FFmpeg 6.0 blend=multiply filter chain. "
-            "Set dry_run=True to use cv2 numpy-multiply placeholder."
-        )
+        # ── Live composite — FFmpeg blend=multiply ─────────────────────────────
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(graded_path),
+            "-loop", "1", "-i", str(mask_path),
+            "-filter_complex", "[0:v][1:v]blend=all_mode=multiply:all_opacity=1",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-shortest",
+            str(output_path),
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"composite_final: FFmpeg blend failed (exit {proc.returncode}):\n"
+                + proc.stderr.decode("utf-8", errors="replace")
+            )
+        return output_path
 
 
 # ── export_preview() ────────────────────────────────────────────────────────────
@@ -489,8 +632,12 @@ def export_preview(
       Format: GIF (dry-run writes AVI-in-GIF extension via cv2)
     """
     # ── Segment math ───────────────────────────────────────────────────────────
-    seam_1_s = seam_frames_playable[0] / TARGET_FPS
-    seam_2_s = seam_frames_playable[1] / TARGET_FPS
+    # Seam frames are positions in the playable timeline recorded at 30 fps.
+    # Use 30.0 here — not TARGET_FPS (which is the generation/output fps) —
+    # so that seam-to-seconds conversion matches the editorial timeline spec.
+    _SEAM_TIMELINE_FPS = 30.0
+    seam_1_s = seam_frames_playable[0] / _SEAM_TIMELINE_FPS
+    seam_2_s = seam_frames_playable[1] / _SEAM_TIMELINE_FPS
 
     segments = [
         {
@@ -594,18 +741,114 @@ def export_preview(
         return manifest
 
     else:
-        # TODO: LIVE GIF PREVIEW EXPORT — FFmpeg palette + palettegen
-        # Required tool: FFmpeg 6.0
-        # For each segment, extract with -ss / -t, concatenate, then apply:
-        #   -vf "fps=5,scale=854:480:flags=lanczos,split[s0][s1];
-        #        [s0]palettegen[p];[s1][p]paletteuse"
-        # This produces a high-quality 256-color GIF with optimized palette.
-        # Set dry_run=True to use cv2 AVI-in-GIF placeholder.
-        raise NotImplementedError(
-            "Live GIF preview export not yet implemented. "
-            "Requires FFmpeg 6.0 with palettegen/paletteuse filter chain. "
-            "Set dry_run=True to use cv2-based AVI-in-GIF placeholder export."
-        )
+        # ── Live GIF preview export — FFmpeg palettegen/paletteuse ────────────
+        with tempfile.TemporaryDirectory() as _tmpdir:
+            _tmp = Path(_tmpdir)
+
+            gif_paths = []
+            for i, seg in enumerate(segments):
+                start_s = seg["start_s"]
+                end_s   = seg["end_s"]
+
+                # Phase 1 — extract segment
+                seg_raw = _tmp / f"seg_{i}.mp4"
+                proc = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-ss", str(start_s), "-to", str(end_s),
+                        "-i", str(source_path),
+                        "-c", "copy",
+                        str(seg_raw),
+                    ],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"export_preview: segment {i} extraction failed "
+                        f"(exit {proc.returncode}):\n"
+                        + proc.stderr.decode("utf-8", errors="replace")
+                    )
+
+                # Phase 2 — scale to 854×480
+                seg_scaled = _tmp / f"seg_{i}_scaled.mp4"
+                proc = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-i", str(seg_raw),
+                        "-vf", "scale=854:480:flags=lanczos",
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                        str(seg_scaled),
+                    ],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"export_preview: segment {i} scale failed "
+                        f"(exit {proc.returncode}):\n"
+                        + proc.stderr.decode("utf-8", errors="replace")
+                    )
+
+                # Phase 3 — generate palette then apply it
+                palette = _tmp / f"palette_{i}.png"
+                proc = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-i", str(seg_scaled),
+                        "-vf", "fps=5,palettegen",
+                        str(palette),
+                    ],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"export_preview: palette gen {i} failed "
+                        f"(exit {proc.returncode}):\n"
+                        + proc.stderr.decode("utf-8", errors="replace")
+                    )
+
+                seg_gif = _tmp / f"seg_{i}.gif"
+                proc = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-i", str(seg_scaled),
+                        "-i", str(palette),
+                        "-lavfi", "fps=5[x];[x][1:v]paletteuse",
+                        str(seg_gif),
+                    ],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"export_preview: GIF encode {i} failed "
+                        f"(exit {proc.returncode}):\n"
+                        + proc.stderr.decode("utf-8", errors="replace")
+                    )
+                gif_paths.append(seg_gif)
+
+            # Phase 4 — concatenate GIF segments
+            proc = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", str(gif_paths[0]),
+                    "-i", str(gif_paths[1]),
+                    "-i", str(gif_paths[2]),
+                    "-filter_complex", "concat=n=3:v=1:a=0",
+                    str(output_gif_path),
+                ],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"export_preview: GIF concat failed "
+                    f"(exit {proc.returncode}):\n"
+                    + proc.stderr.decode("utf-8", errors="replace")
+                )
+
+        # Phase 5 — write manifest
+        with output_manifest_path.open("w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, indent=2)
+
+        return manifest
 
 
 # ── run_post_processing() ───────────────────────────────────────────────────────
@@ -618,6 +861,7 @@ def run_post_processing(
     seam_frames_playable: list,
     output_dir:           Path,
     dry_run:              bool = False,
+    temporal_probe:       dict = None,
 ) -> dict:
     """
     Top-level post-processing orchestrator. Runs all six steps in strict order.
@@ -636,6 +880,9 @@ def run_post_processing(
         seam_frames_playable: [seam_1_frame, seam_2_frame] for preview math.
         output_dir:           Root output directory for all bundles.
         dry_run:              If True, all steps use cv2/numpy placeholders.
+        temporal_probe:       Result dict from run_temporal_probe(). When
+                              provided, both probe dicts are serialised to
+                              JSON files inside the bundle's raw/ directory.
 
     Returns:
         Full result dict with all output paths and metadata.
@@ -651,6 +898,17 @@ def run_post_processing(
     upscale_dir.mkdir(parents=True, exist_ok=True)
     upscaled_path = upscale_dir / f"{clip_id}_1080p.mp4"
     upscale_clip(raw_loop_path, upscaled_path, decode_probe, dry_run)
+
+    # ── Step 1b: Persist probe dicts to disk ───────────────────────────────────
+    decode_probe_path_obj  = upscale_dir / f"{clip_id}_decode_probe.json"
+    temporal_probe_path_obj = upscale_dir / f"{clip_id}_temporal_probe.json"
+
+    with decode_probe_path_obj.open("w", encoding="utf-8") as fh:
+        json.dump(decode_probe, fh, indent=2)
+
+    _temporal_to_write = temporal_probe if temporal_probe is not None else {}
+    with temporal_probe_path_obj.open("w", encoding="utf-8") as fh:
+        json.dump(_temporal_to_write, fh, indent=2)
 
     # ── Step 2: Masks + Risk ───────────────────────────────────────────────────
     masks_dir = output_dir / clip_id / "masks"
@@ -712,14 +970,16 @@ def run_post_processing(
 
     # ── Step 6: Return result dict ─────────────────────────────────────────────
     return {
-        "clip_id":         clip_id,
-        "upscaled":        str(upscaled_path),
-        "masks":           {pos: str(path) for pos, path in masks.items()},
-        "risks":           risks,
-        "graded_variants": {name: str(path) for name, path in graded_variants.items()},
-        "selected_lut":    selected_lut,
-        "luts_generated":  luts_to_generate,
-        "final":           str(final_output),
-        "preview_gif":     str(preview_gif_path),
-        "preview_manifest": manifest,
+        "clip_id":              clip_id,
+        "upscaled":             str(upscaled_path),
+        "decode_probe_path":    str(decode_probe_path_obj),
+        "temporal_probe_path":  str(temporal_probe_path_obj),
+        "masks":                {pos: str(path) for pos, path in masks.items()},
+        "risks":                risks,
+        "graded_variants":      {name: str(path) for name, path in graded_variants.items()},
+        "selected_lut":         selected_lut,
+        "luts_generated":       luts_to_generate,
+        "final":                str(final_output),
+        "preview_gif":          str(preview_gif_path),
+        "preview_manifest":     manifest,
     }
