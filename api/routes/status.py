@@ -80,10 +80,22 @@ def run_status_route(run_id: str) -> RunStatusResponse:
             detail=f"Run {run_id} not found",
         )
 
-    entry = RUN_REGISTRY[run_id]
+    entry  = RUN_REGISTRY[run_id]
+    result = entry.get("result") or {}
+
     return RunStatusResponse(
         run_id=run_id,
         status=entry["status"],
         stages=entry["stages"],
         error=entry.get("error"),
+        # Spread result fields so the frontend can use the final data
+        # without making a separate request after polling detects completion.
+        raw_loop_path=result.get("raw_loop_path"),
+        seed=result.get("seed"),
+        seam_frames_raw=result.get("seam_frames_raw"),
+        seam_frames_playable=result.get("seam_frames_playable"),
+        gate_result=result.get("gate_result"),
+        selected_lut=result.get("selected_lut"),
+        lower_third_style=result.get("lower_third_style"),
+        metadata_path=result.get("metadata_path"),
     )

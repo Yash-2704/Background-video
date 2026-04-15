@@ -107,11 +107,21 @@ class StatusResponse(BaseModel):
 
 
 class RunStatusResponse(BaseModel):
-    """Returned by GET /api/v1/run/{run_id}/status — live stage data from RUN_REGISTRY."""
-    run_id:  str
-    status:  str
-    stages:  dict[str, str]
-    error:   Optional[str] = None
+    """Returned by GET /api/v1/run/{run_id}/status — live stage data from RUN_REGISTRY.
+    Result fields are populated only when status == 'complete'."""
+    run_id:               str
+    status:               str
+    stages:               dict[str, str]
+    error:                Optional[str] = None
+    # Full result — present when status == "complete"
+    raw_loop_path:        Optional[str] = None
+    seed:                 Optional[int] = None
+    seam_frames_raw:      Optional[list[int]] = None
+    seam_frames_playable: Optional[list[int]] = None
+    gate_result:          Optional[dict] = None
+    selected_lut:         Optional[str] = None
+    lower_third_style:    Optional[str] = None
+    metadata_path:        Optional[str] = None
 
 
 class BundleResponse(BaseModel):

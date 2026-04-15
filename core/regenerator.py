@@ -28,7 +28,7 @@ from pathlib import Path
 from core.gates import evaluate_gates, GENERATION_CONSTANTS
 
 # ── Module-level constants ──────────────────────────────────────────────────────
-MAX_RETRIES = GENERATION_CONSTANTS["max_regeneration_retries"]   # 3
+MAX_RETRIES = 0   # Disabled: regen loop adds up to 57 min with no guaranteed improvement
 BASE_CFG    = GENERATION_CONSTANTS["cfg_scale"]                  # 6.0
 
 

@@ -31,6 +31,13 @@ export async function submitGeneration(runPayload) {
     throw new Error(`Network error reaching generate endpoint: ${networkError.message}`)
   }
 
+  // 409 means the run is already in progress (React StrictMode fires useEffect
+  // twice in dev — the second POST arrives after the first fire-and-forget POST
+  // already registered the run). Treat it as success and start polling.
+  if (response.status === 409) {
+    return { run_id: runPayload.run_id, status: 'running' }
+  }
+
   if (!response.ok) {
     const text = await response.text()
     throw new Error(`Generation failed: ${response.status} ${text}`)

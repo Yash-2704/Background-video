@@ -1,13 +1,19 @@
 {
   "model": "Wan2.2-TI2V-5B-Diffusers",
   "_removed_fields_note": "tokenizer field removed — not applicable to Wan2.2-TI2V-5B-Diffusers",
-  "sampler": "DPM++ 2M",
-  "steps": 50,
+  "sampler": "UniPC Multistep",
+  "steps": 20,
   "cfg_scale": 6.0,
   "native_fps": 24,
   "target_fps": 24,
-  "generate_resolution": [1280, 720],
-  "upscale_target": [1920, 1080],
+  "generate_resolution": [
+    1280,
+    736
+  ],
+  "upscale_target": [
+    1920,
+    1080
+  ],
   "upscale_factor": 1.5,
   "vae_compression": {
     "temporal": 4,
@@ -31,13 +37,27 @@
   "crossfade_duration_s": 0.583,
   "seam_count": 2,
   "total_crossfade_consumed_s": 1.167,
-  "seam_frames_raw_timeline": [145, 290],
-  "seam_frames_playable_timeline": [138, 269],
-  "seam_positions_seconds_playable": [5.75, 11.21],
+  "seam_frames_raw_timeline": [
+    145,
+    290
+  ],
+  "seam_frames_playable_timeline": [
+    138,
+    269
+  ],
+  "seam_positions_seconds_playable": [
+    5.75,
+    11.21
+  ],
   "total_raw_frames": 435,
   "total_playable_frames": 406,
   "anchor_position_default": "center",
-  "anchor_zone": {"x": 0.25, "y": 0.35, "w": 0.50, "h": 0.55},
+  "anchor_zone": {
+    "x": 0.25,
+    "y": 0.35,
+    "w": 0.50,
+    "h": 0.55
+  },
   "anchor_feather_px": 24,
   "luminance_reduction": 0.22,
   "max_regeneration_retries": 3,
@@ -48,7 +68,9 @@
     "luminance_gate_min": 0.30,
     "luminance_gate_max": 0.70
   },
-  "lut_always_generate": ["neutral"],
+  "lut_always_generate": [
+    "neutral"
+  ],
   "lut_options": {
     "Cool": "cool_authority",
     "Neutral": "neutral",
@@ -71,6 +93,6 @@
       "lift_shadows": -0.04
     }
   },
-  "dev_mode": true,
+  "dev_mode": false,
   "production_note": "Set extensions_per_clip to 4 and dev_mode to false for production"
 }

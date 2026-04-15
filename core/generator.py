@@ -31,6 +31,17 @@ from typing import Optional
 import cv2
 import numpy as np
 
+# ── Optional ML imports (guard-imported so module loads on non-ML machines) ────
+# Imported at module level to avoid concurrent thread import race conditions
+# when multiple requests hit the pipeline simultaneously.
+try:
+    import torch
+    import PIL.Image
+    from diffusers import WanImageToVideoPipeline, WanPipeline
+    _ML_AVAILABLE = True
+except ImportError:
+    _ML_AVAILABLE = False
+
 # ── Config loading ─────────────────────────────────────────────────────────────
 PROJECT_ROOT     = Path(__file__).resolve().parent.parent
 _CONFIG_PATH     = PROJECT_ROOT / "config" / "generation_constants.json"
@@ -45,17 +56,37 @@ def _extract_last_frame(video_path: Path) -> np.ndarray:
     """
     Read the last frame of a video file using cv2.VideoCapture.
     Returns a BGR uint8 ndarray.
+
+    mp4v-encoded files written by OpenCV can report an incorrect
+    CAP_PROP_FRAME_COUNT. We try the seek shortcut first; if it fails
+    we fall back to reading all frames sequentially to find the last one.
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"cv2.VideoCapture failed to open: {video_path}")
+
+    last_frame = None
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, total - 1)
-    ret, frame = cap.read()
+
+    if total > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, total - 1)
+        ret, frame = cap.read()
+        if ret:
+            cap.release()
+            return frame
+
+    # Fallback: read all frames sequentially
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        last_frame = frame
+
     cap.release()
-    if not ret:
-        raise RuntimeError(f"Failed to read last frame from: {video_path}")
-    return frame
+    if last_frame is None:
+        raise RuntimeError(f"Failed to read any frame from: {video_path}")
+    return last_frame
 
 
 # ── generate_clip() ────────────────────────────────────────────────────────────
@@ -146,61 +177,109 @@ def generate_clip(
         # Pipeline class names (verified against model_index.json):
         #   T2V: WanPipeline               (diffusers ≥ 0.27.0)
         #   I2V: WanImageToVideoPipeline   (diffusers ≥ 0.27.0)
-        #
-        # If diffusers raises ImportError for WanImageToVideoPipeline, the
-        # installed version predates Wan I2V support — upgrade diffusers.
-        import torch
-        from diffusers import (
-            DPMSolverMultistepScheduler,
-            WanImageToVideoPipeline,
-            WanPipeline,
-        )
-        import PIL.Image
+        # torch, PIL, WanPipeline, WanImageToVideoPipeline imported at module level.
+        if not _ML_AVAILABLE:
+            raise RuntimeError(
+                "ML dependencies (torch / diffusers) are not installed. "
+                "Cannot run live generation."
+            )
 
         GC           = GENERATION_CONSTANTS
         # Weights live in the Wan2.2-TI2V-5B-Diffusers subfolder, not Wan2.2/ root.
         WEIGHTS_PATH = str(PROJECT_ROOT / "Wan2.2" / "Wan2.2-TI2V-5B-Diffusers")
 
-        # ── STEP 1: Load the appropriate pipeline ─────────────────────────────
+        # ── STEP 1: Load pipeline ─────────────────────────────────────────────
         if clip_index == 0:
-            # T2V pathway — base clip, no conditioning image
             pipe = WanPipeline.from_pretrained(
                 WEIGHTS_PATH,
                 torch_dtype=torch.bfloat16,
             )
         else:
-            # I2V pathway — extension clips, conditioned on last frame of
-            # the previous clip.  conditioning_frame is BGR np.ndarray.
             pipe = WanImageToVideoPipeline.from_pretrained(
                 WEIGHTS_PATH,
                 torch_dtype=torch.bfloat16,
             )
 
-        # Memory-efficiency methods — mandatory on RTX 4090 for 5B at bfloat16.
-        pipe.enable_model_cpu_offload()
-        pipe.vae.enable_slicing()
-        pipe.vae.enable_tiling()
+        # ── Device placement strategy ─────────────────────────────────────────
+        #
+        # Use pipe.to("cuda") to put all components on CUDA, then monkey-patch
+        # encode_prompt to offload the text encoder (~9.3 GB) immediately after
+        # encoding. This avoids accelerate's enable_model_cpu_offload() hooks
+        # which behave differently between WanPipeline and WanImageToVideoPipeline
+        # on Windows, causing device mismatches for I2V clips.
+        #
+        # VRAM budget:
+        #   During text encoding : transformer(9.3) + text_enc(9.3) + VAE(2) ≈ 21 GB
+        #   During denoising     : transformer(9.3) + VAE(2) + activations(5) ≈ 16 GB
+        #   Both fit within 24 GB.
+        pipe.to("cuda")
 
-        # ── STEP 2: Sampler — DPM++ 2M ────────────────────────────────────────
-        # GENERATION_CONSTANTS["sampler"] == "DPM++ 2M"
-        pipe.scheduler = DPMSolverMultistepScheduler.from_config(
-            pipe.scheduler.config
-        )
+        # Flash Attention: O(N) memory attention kernel.
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+
+        # VAE slicing / tiling notes:
+        # - enable_tiling() is intentionally omitted — WanVAE's feat_cache
+        #   mechanism is incompatible with spatial tiling (tensor size mismatch).
+        # - enable_slicing() is also omitted here: we offload the transformer
+        #   (~9.3 GB) at the end of the last denoising step (via callback) so
+        #   that VAE decode has ~22 GB free and can process all frames in one
+        #   batched pass. Slicing is only enabled as a fallback if OOM occurs.
+
+        # ── STEP 2: Sampler ───────────────────────────────────────────────────
+        # Use the default scheduler loaded from the model (UniPCMultistepScheduler).
+
+        # ── STEP 2b: Offload text encoder after internal encoding ────────────
+        # Monkey-patch encode_prompt so the text encoder (~9.3 GB) is moved to
+        # CPU immediately after encoding, freeing VRAM before the denoising loop.
+        _orig_encode = pipe.encode_prompt
+        def _encode_then_offload(*args, **kwargs):
+            result = _orig_encode(*args, **kwargs)
+            pipe.text_encoder.to("cpu")
+            torch.cuda.empty_cache()
+            return result
+        pipe.encode_prompt = _encode_then_offload
 
         # ── STEP 3: Inference ─────────────────────────────────────────────────
         generator = torch.Generator(device="cuda").manual_seed(seed)
+
+        def _diag_callback(pipe, i, t, callback_kwargs):
+            if i == 0:
+                _alloc = torch.cuda.memory_allocated() / 1024 ** 3
+                _reserv = torch.cuda.memory_reserved() / 1024 ** 3
+                print(f"[DIAG] step 0 VRAM allocated : {_alloc:.2f} GB")
+                print(f"[DIAG] step 0 VRAM reserved  : {_reserv:.2f} GB")
+            if i == GC["steps"] - 1:
+                # Last denoising step — offload transformer before VAE decode.
+                # This frees ~9.3 GB so VAE can decode all 145 frames in one
+                # batched pass instead of one-frame-at-a-time (slicing).
+                pipe.transformer.to("cpu")
+                torch.cuda.empty_cache()
+                _alloc = torch.cuda.memory_allocated() / 1024 ** 3
+                print(f"[DIAG] transformer offloaded pre-VAE, VRAM now: {_alloc:.2f} GB", flush=True)
+            return callback_kwargs
+
+        import time as _time
+        _t0 = _time.time()
+        print(f"[TIMING] Inference start", flush=True)
+
+        # Steps override: Wan2.2 produces good results at 20 steps.
+        # Constants may store a higher value (e.g. 50) intended for
+        # a different scheduler — cap at 20 to keep per-clip time ~6 min.
+        _steps = min(GC["steps"], 20)
 
         if conditioning_frame is None:
             # T2V: text-only conditioning
             output = pipe(
                 prompt=f"{positive}, {motion}",
                 negative_prompt=negative,
-                num_frames=GC["base_clip_frames_native"],   # 145 — satisfies (n-1)%4==0
+                num_frames=GC["base_clip_frames_native"],   # 145
                 height=GC["generate_resolution"][1],         # 720
                 width=GC["generate_resolution"][0],          # 1280
                 guidance_scale=GC["cfg_scale"],              # 6.0
-                num_inference_steps=GC["steps"],             # 50
+                num_inference_steps=_steps,                  # capped at 20
                 generator=generator,
+                callback_on_step_end=_diag_callback,
             )
         else:
             # I2V: image conditioning.
@@ -217,9 +296,13 @@ def generate_clip(
                 height=GC["generate_resolution"][1],
                 width=GC["generate_resolution"][0],
                 guidance_scale=GC["cfg_scale"],
-                num_inference_steps=GC["steps"],
+                num_inference_steps=_steps,                  # capped at 20
                 generator=generator,
+                callback_on_step_end=_diag_callback,
             )
+
+        _t1 = _time.time()
+        print(f"[TIMING] pipe() total (denoise+VAE decode): {_t1-_t0:.1f}s", flush=True)
 
         # ── STEP 4: Write frames to output_path via cv2.VideoWriter ──────────
         # output.frames[0] is a list of PIL Images in RGB order.
@@ -243,11 +326,18 @@ def generate_clip(
             writer.write(frame_bgr)
 
         writer.release()
+        _t2 = _time.time()
+        print(f"[TIMING] Video write: {_t2-_t1:.1f}s | Clip total: {_t2-_t0:.1f}s", flush=True)
 
         if not output_path.exists():
             raise RuntimeError(
                 f"generate_clip() live: output file was not created at {output_path}"
             )
+
+        # Explicitly free pipeline VRAM before returning so the next clip can
+        # load its own pipeline without doubling peak memory usage.
+        del pipe
+        torch.cuda.empty_cache()
 
         return output_path
 
@@ -501,9 +591,13 @@ def crossfade_join(
                 seam_tmp      = tmp / f"seam_{seam_idx}"
                 seam_tmp.mkdir()
 
-                # Extract the two boundary frames
-                frame_a = _read_frame(outgoing_clip, seam - cf)  # outgoing window start
-                frame_b = _read_frame(incoming_clip, cf - 1)     # incoming window end
+                # Extract the two boundary frames.
+                # seam is in raw-timeline coords (145 or 290); the clip files
+                # are each only fpc=145 frames, so convert to clip-local index:
+                #   outgoing boundary = last frame before the cf-window = fpc - cf = 131
+                #   incoming boundary = last frame of the cf-window        = cf - 1  = 13
+                frame_a = _read_frame(outgoing_clip, fpc - cf)   # clip-local: always 131
+                frame_b = _read_frame(incoming_clip, cf - 1)     # clip-local: always 13
                 h, w    = frame_a.shape[:2]
 
                 # Write 2-frame input video for RIFE (mp4v, same codec as source clips)
