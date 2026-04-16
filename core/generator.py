@@ -478,6 +478,17 @@ def crossfade_join(
         RIFE_MODEL  = RIFE_DIR / "train_log"
         RIFE_SCRIPT = RIFE_DIR / "inference_video.py"
 
+        if not RIFE_SCRIPT.exists():
+            raise FileNotFoundError(
+                f"RIFE inference script not found: {RIFE_SCRIPT}\n"
+                f"Clone Practical-RIFE into: {RIFE_DIR}"
+            )
+        if not RIFE_MODEL.exists():
+            raise FileNotFoundError(
+                f"RIFE model weights not found: {RIFE_MODEL}\n"
+                f"Download train_log/ into: {RIFE_DIR}"
+            )
+
         seam_frames_playable = GC["seam_frames_playable_timeline"]   # [138, 269]
         playable_frames      = GC["total_playable_frames"]            # 406
         seams_raw            = [fpc * (i + 1) for i in range(seam_count)]  # [145, 290]
@@ -643,8 +654,11 @@ def crossfade_join(
             concat_list = tmp / "concat.txt"
             with concat_list.open("w", encoding="utf-8") as fh:
                 for seg in all_segs:
-                    # Use absolute paths; -safe 0 allows them in the concat list.
-                    fh.write(f"file '{seg.resolve()}'\n")
+                    # Use absolute paths with forward slashes; -safe 0 allows them.
+                    # Backslashes in Windows paths cause FFmpeg concat demuxer to
+                    # treat "C:\" as a protocol, failing with "Protocol 'c' not found".
+                    fwd = str(seg.resolve()).replace("\\", "/")
+                    fh.write(f"file '{fwd}'\n")
 
             _ffmpeg(
                 "-f", "concat",

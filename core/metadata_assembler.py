@@ -361,13 +361,14 @@ def assemble_metadata(
         },
 
         "quality_gates": {
-            # Probe values — sourced from decode_probe and temporal_probe
+            # Probe values — sourced from decode_probe and temporal_probe.
+            # temporal_probe may be {} if temporal analysis was skipped.
             "mean_luminance":         decode_probe["mean_luminance"],
             "luminance_gate":         luminance_gate,
-            "flicker_index":          temporal_probe["flicker_index"],
-            "warping_artifact_score": temporal_probe["warping_artifact_score"],
-            "scene_cut_detected":     temporal_probe["scene_cut_detected"],
-            "perceptual_loop_score":  temporal_probe["perceptual_loop_score"],
+            "flicker_index":          temporal_probe.get("flicker_index", None),
+            "warping_artifact_score": temporal_probe.get("warping_artifact_score", None),
+            "scene_cut_detected":     temporal_probe.get("scene_cut_detected", None),
+            "perceptual_loop_score":  temporal_probe.get("perceptual_loop_score", None),
             # Overall verdict — from gate_result
             "overall":                gate_result["overall"],
             # attempts_used — from generation_result (1 if not retried)
@@ -535,9 +536,10 @@ def assemble_integration_contract(
 
     # loop_frame_delta_max value: use explicit key if present (future probe), else
     # derive from perceptual_loop_score (1.0 - SSIM approximates mean abs delta)
+    _loop_score = temporal_probe.get("perceptual_loop_score")
     loop_delta_value = temporal_probe.get(
         "loop_origin_return_delta",
-        round(1.0 - temporal_probe["perceptual_loop_score"], 6),
+        round(1.0 - _loop_score, 6) if _loop_score is not None else None,
     )
 
     # ── Section 1: for_human_editor (independent dict) ──────────────────────────
@@ -617,9 +619,9 @@ def assemble_integration_contract(
                 "values below 0.010 are invisible at broadcast frame rate"
             ),
         },
-        # flicker/warp — directly from temporal_probe
-        "flicker_index":           temporal_probe["flicker_index"],
-        "warping_artifact_score":  temporal_probe["warping_artifact_score"],
+        # flicker/warp — from temporal_probe (None if temporal analysis was skipped)
+        "flicker_index":           temporal_probe.get("flicker_index", None),
+        "warping_artifact_score":  temporal_probe.get("warping_artifact_score", None),
         # decode_profile — from metadata files section (MISSING in dev phase)
         "decode_profile":          metadata["files"].get("decode_probe", "MISSING"),
         # integrity_check — from gate_result

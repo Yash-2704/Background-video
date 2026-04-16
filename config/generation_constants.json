@@ -68,9 +68,7 @@
     "luminance_gate_min": 0.30,
     "luminance_gate_max": 0.70
   },
-  "lut_always_generate": [
-    "neutral"
-  ],
+  "lut_always_generate": [],
   "lut_options": {
     "Cool": "cool_authority",
     "Neutral": "neutral",
