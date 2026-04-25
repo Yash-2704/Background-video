@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from api.models import HealthResponse, ValidInputsResponse
-from api.routes import bundle, compile, generate, status
+from api.routes import bundle, compile, generate, prototype, status
 from core.prompt_compiler import get_all_valid_inputs
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -54,6 +54,7 @@ app.include_router(compile.router, prefix=_PREFIX)
 app.include_router(generate.router, prefix=_PREFIX)
 app.include_router(status.router, prefix=_PREFIX)
 app.include_router(bundle.router, prefix=_PREFIX)
+app.include_router(prototype.router, prefix=f"{_PREFIX}/prototype")
 
 
 # ── Standalone routes ─────────────────────────────────────────────────────────

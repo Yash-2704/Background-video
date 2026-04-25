@@ -92,5 +92,9 @@
     }
   },
   "dev_mode": false,
-  "production_note": "Set extensions_per_clip to 4 and dev_mode to false for production"
+  "production_note": "Set extensions_per_clip to 4 and dev_mode to false for production",
+  "prototype_image_steps": 4,
+  "prototype_image_guidance_scale": 0.0,
+  "prototype_output_resolution": [1280, 736],
+  "prototype_duration_seconds": 5
 }

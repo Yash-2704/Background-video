@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import EditorialForm from './components/EditorialForm.jsx'
 import RunMonitor from './components/RunMonitor.jsx'
 import BundleViewer from './components/BundleViewer.jsx'
+import PrototypeViewer from './components/PrototypeViewer.jsx'
 import './styles/form.css'
 import './styles/monitor.css'
 import './styles/viewer.css'
@@ -69,6 +70,7 @@ export default function App() {
             )}
           </>
         )}
+        {currentScreen === 'form' && <PrototypeViewer />}
       </main>
     </div>
   )
