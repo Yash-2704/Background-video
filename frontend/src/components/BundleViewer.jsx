@@ -182,8 +182,9 @@ function MetadataPanel({ data }) {
       <InfoRow label="Luminance Gate"         value={qg.luminance_gate} />
       <InfoRow label="Flicker Index"          value={qg.flicker_index} />
       <InfoRow label="Warping Artifact Score" value={qg.warping_artifact_score} />
-      <InfoRow label="Scene Cut Detected"     value={String(qg.scene_cut_detected)} />
+      <InfoRow label="Scene Cut Detected"     value={qg.scene_cut_detected != null ? String(qg.scene_cut_detected) : '—'} />
       <InfoRow label="Perceptual Loop Score"  value={qg.perceptual_loop_score} />
+      <InfoRow label="Sampled Frames"         value={qg.sampled_frames ?? '—'} />
       <div className="info-row">
         <span className="info-label">Overall</span>
         <span className="info-value"><GateBadge value={qg.overall} /></span>

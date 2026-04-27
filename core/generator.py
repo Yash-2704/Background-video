@@ -13,11 +13,11 @@ Responsibilities:
                           Not called in default 24fps pipeline. See function
                           docstring for re-enable instructions.
 
-Dry-run mode (dev_mode=True in generation_constants.json):
+Dry-run mode (dry_run=True on run_generation / generate_clip):
   All model calls are bypassed. cv2 writes synthetic placeholder MP4 files
   that are syntactically valid so every downstream stage can run today.
 
-Live mode (dev_mode=False):
+Live mode (dry_run=False):
   torch and diffusers are imported only inside the live branch so this
   module imports cleanly on a machine with zero ML packages installed.
 """
@@ -686,6 +686,7 @@ def run_generation(
     run_id:     str,
     output_dir: Path,
     seed:       int = None,
+    dry_run:    bool = False,
 ) -> dict:
     """
     Top-level orchestrator called by the FastAPI layer.
@@ -708,9 +709,7 @@ def run_generation(
     if seed is None:
         seed = random.randint(10000, 99999)
 
-    GC       = GENERATION_CONSTANTS
-    dev_mode = GC["dev_mode"]
-
+    GC      = GENERATION_CONSTANTS
     run_dir = output_dir / run_id
     raw_dir = run_dir / "raw"
 
@@ -738,7 +737,7 @@ def run_generation(
                 seed=clip_seed,
                 clip_index=idx,
                 output_path=out_path,
-                dry_run=dev_mode,
+                dry_run=dry_run,
                 conditioning_frame=conditioning_frame,
             )
             raw_clip_paths.append(out_path)
@@ -755,14 +754,14 @@ def run_generation(
         join_result   = crossfade_join(
             clip_paths=raw_clip_paths,
             output_path=raw_loop_path,
-            dry_run=dev_mode,
+            dry_run=dry_run,
         )
 
         # ── Assemble return dict ──────────────────────────────────────────────
         generation_log = {
             "run_id":                    run_id,
             "seed":                      seed,
-            "dev_mode":                  dev_mode,
+            "dry_run":                   dry_run,
             "clips_generated":           3,
             "seeds_used":                clip_seeds,
             "generation_modes":          generation_modes,
@@ -871,5 +870,5 @@ def interpolate_clip(
         #   output_path: output_path (passed in)
         raise NotImplementedError(
             "Live RIFE interpolation not yet implemented. "
-            "Set dev_mode=true in generation_constants.json to use dry-run."
+            "Pass dry_run=True to use the cv2 frame-duplication stub."
         )

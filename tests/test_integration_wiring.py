@@ -1,9 +1,9 @@
 """
 tests/test_integration_wiring.py
 ─────────────────────────────────
-Integration wiring verification for Prompt 7 (Final integration checkpoint).
+Integration wiring verification.
 
-Verifies that dev_mode toggle, orchestrator stage keys, LUT files, and
+Verifies that orchestrator stage keys, config structure, LUT files, and
 the GPU readiness script are all correctly wired. These tests do NOT call
 run_generation() and do NOT write video frames.
 
@@ -50,64 +50,45 @@ def _orchestrator_source() -> str:
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
-def test_01_dev_mode_key_exists():
-    """dev_mode key must be present in generation_constants.json."""
+# ── REPLACEMENT TESTS (replace deleted test_01, test_02, test_03) ──────────────
+
+def test_01_dev_mode_key_absent():
+    """dev_mode key must NOT be present in generation_constants.json."""
     gc = _load_gen_constants()
-    assert "dev_mode" in gc, "dev_mode key missing from generation_constants.json"
-
-
-def test_02_dev_mode_is_true():
-    """
-    dev_mode must be true on the dev machine.
-
-    This test intentionally fails on the GPU machine after the operator flips
-    dev_mode to false — that failure is expected and correct.
-    """
-    gc = _load_gen_constants()
-    assert gc["dev_mode"] is True, (
-        "dev_mode is not true in generation_constants.json. "
-        "On a GPU machine this is expected after flipping the switch."
+    assert "dev_mode" not in gc, (
+        "dev_mode key found in generation_constants.json — it must be removed"
     )
 
 
-def test_03_dry_run_reads_from_config_not_hardcoded():
-    """
-    DRY_RUN in orchestrator must be assigned from GENERATION_CONSTANTS['dev_mode'],
-    not from a hardcoded True or False literal.
+def test_02_dry_run_constant_absent_from_orchestrator():
+    """DRY_RUN constant must NOT appear anywhere in orchestrator.py source."""
+    source = _orchestrator_source()
+    assert "DRY_RUN" not in source, (
+        "DRY_RUN found in orchestrator.py — the global flag must be fully removed"
+    )
 
-    Uses AST inspection so it works without importing torch/diffusers.
+
+def test_03_orchestrator_passes_dry_run_false_explicitly():
+    """
+    orchestrator.py must pass dry_run=False explicitly to pipeline functions.
+    dry_run=DRY_RUN must not appear anywhere in the source.
     """
     source = _orchestrator_source()
-    tree = ast.parse(source)
-
-    # Find the assignment: DRY_RUN = ... or DRY_RUN: bool = ...
-    # orchestrator uses an annotated assignment (ast.AnnAssign), not plain ast.Assign
-    dry_run_assignment = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "DRY_RUN":
-                    dry_run_assignment = node.value
-                    break
-        if isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name) and node.target.id == "DRY_RUN":
-                dry_run_assignment = node.value
-                break
-
-    assert dry_run_assignment is not None, "DRY_RUN assignment not found in orchestrator.py"
-
-    # The RHS must NOT be a bare True/False constant
-    assert not isinstance(dry_run_assignment, ast.Constant), (
-        "DRY_RUN is assigned a hardcoded constant — must read from GENERATION_CONSTANTS"
+    assert "dry_run=False" in source, (
+        "dry_run=False not found in orchestrator.py — pipeline functions must receive explicit False"
+    )
+    assert "dry_run=DRY_RUN" not in source, (
+        "dry_run=DRY_RUN still present in orchestrator.py — remove the DRY_RUN constant reference"
     )
 
-    # The RHS source text must reference GENERATION_CONSTANTS and dev_mode
-    rhs_src = ast.get_source_segment(source, dry_run_assignment) or ""
-    assert "GENERATION_CONSTANTS" in rhs_src, (
-        f"DRY_RUN RHS does not reference GENERATION_CONSTANTS: {rhs_src!r}"
-    )
-    assert "dev_mode" in rhs_src, (
-        f"DRY_RUN RHS does not reference dev_mode: {rhs_src!r}"
+
+# ── REPLACEMENT TEST (replaces test_06 in test_constants.py, added here too) ──
+
+def test_extensions_per_clip_is_4():
+    """extensions_per_clip must be 4 now that dev_mode cap is removed."""
+    gc = _load_gen_constants()
+    assert gc["extensions_per_clip"] == 4, (
+        f"extensions_per_clip must be 4, got {gc['extensions_per_clip']}"
     )
 
 

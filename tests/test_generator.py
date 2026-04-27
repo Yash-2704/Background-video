@@ -71,7 +71,7 @@ def _frame_count(path: Path) -> int:
 
 def test_run_generation_completes_and_returns_required_keys(tmp_path):
     """Test 1: run_generation() with dev_mode=True returns all required keys."""
-    result = run_generation(COMPILED_DICT, "run001", tmp_path, seed=42000)
+    result = run_generation(COMPILED_DICT, "run001", tmp_path, seed=42000, dry_run=True)
     required_keys = {
         "run_id", "status", "raw_loop_path", "seed",
         "seam_frames_raw", "seam_frames_playable", "generation_log",
@@ -83,13 +83,13 @@ def test_run_generation_completes_and_returns_required_keys(tmp_path):
 
 def test_run_generation_raw_loop_file_exists(tmp_path):
     """Test 2: raw_loop_path file exists on disk after run."""
-    result = run_generation(COMPILED_DICT, "run002", tmp_path, seed=42001)
+    result = run_generation(COMPILED_DICT, "run002", tmp_path, seed=42001, dry_run=True)
     assert Path(result["raw_loop_path"]).exists()
 
 
 def test_run_generation_raw_loop_is_valid_mp4(tmp_path):
     """Test 3: raw_loop_path is a valid MP4 readable by cv2.VideoCapture."""
-    result = run_generation(COMPILED_DICT, "run003", tmp_path, seed=42002)
+    result = run_generation(COMPILED_DICT, "run003", tmp_path, seed=42002, dry_run=True)
     cap = cv2.VideoCapture(result["raw_loop_path"])
     assert cap.isOpened()
     cap.release()
@@ -97,7 +97,7 @@ def test_run_generation_raw_loop_is_valid_mp4(tmp_path):
 
 def test_run_generation_seam_frames_raw_are_positive_ints(tmp_path):
     """Test 4: seam_frames_raw is a list of 2 positive integers."""
-    result = run_generation(COMPILED_DICT, "run004", tmp_path, seed=42003)
+    result = run_generation(COMPILED_DICT, "run004", tmp_path, seed=42003, dry_run=True)
     sfr = result["seam_frames_raw"]
     assert isinstance(sfr, list)
     assert len(sfr) == 2
@@ -106,27 +106,27 @@ def test_run_generation_seam_frames_raw_are_positive_ints(tmp_path):
 
 def test_run_generation_playable_seam_less_than_raw_seam(tmp_path):
     """Test 5: seam_frames_playable[0] < seam_frames_raw[0]."""
-    result = run_generation(COMPILED_DICT, "run005", tmp_path, seed=42004)
+    result = run_generation(COMPILED_DICT, "run005", tmp_path, seed=42004, dry_run=True)
     assert result["seam_frames_playable"][0] < result["seam_frames_raw"][0]
 
 
 def test_run_generation_seeds_used_in_log(tmp_path):
     """Test 6: generation_log seeds_used == [seed, seed+1, seed+2]."""
-    result = run_generation(COMPILED_DICT, "run006", tmp_path, seed=50000)
+    result = run_generation(COMPILED_DICT, "run006", tmp_path, seed=50000, dry_run=True)
     seed   = result["seed"]
     assert result["generation_log"]["seeds_used"] == [seed, seed + 1, seed + 2]
 
 
 def test_run_generation_clips_generated_in_log(tmp_path):
     """Test 7: generation_log clips_generated == 3."""
-    result = run_generation(COMPILED_DICT, "run007", tmp_path, seed=42006)
+    result = run_generation(COMPILED_DICT, "run007", tmp_path, seed=42006, dry_run=True)
     assert result["generation_log"]["clips_generated"] == 3
 
 
 def test_run_generation_determinism(tmp_path):
     """Test 8: same explicit seed produces raw_loop files with identical frame counts."""
-    result_a = run_generation(COMPILED_DICT, "run008a", tmp_path, seed=55555)
-    result_b = run_generation(COMPILED_DICT, "run008b", tmp_path, seed=55555)
+    result_a = run_generation(COMPILED_DICT, "run008a", tmp_path, seed=55555, dry_run=True)
+    result_b = run_generation(COMPILED_DICT, "run008b", tmp_path, seed=55555, dry_run=True)
     fc_a = _frame_count(Path(result_a["raw_loop_path"]))
     fc_b = _frame_count(Path(result_b["raw_loop_path"]))
     assert fc_a == fc_b
@@ -228,18 +228,18 @@ def test_run_generation_cleans_up_on_failure(tmp_path):
     """Test 14: on generate_clip() exception, run directory is deleted."""
     with patch("core.generator.generate_clip", side_effect=RuntimeError("mock failure")):
         with pytest.raises(RuntimeError, match="Generation failed for run"):
-            run_generation(COMPILED_DICT, "run_fail", tmp_path, seed=99999)
+            run_generation(COMPILED_DICT, "run_fail", tmp_path, seed=99999, dry_run=True)
 
     assert not (tmp_path / "run_fail").exists()
 
 
 def test_run_generation_assigns_seed_in_valid_range(tmp_path):
     """Test 15: run_generation() with no seed argument assigns a seed in [10000, 99999]."""
-    result = run_generation(COMPILED_DICT, "run015", tmp_path)
+    result = run_generation(COMPILED_DICT, "run015", tmp_path, dry_run=True)
     assert 10000 <= result["seed"] <= 99999
 
 
 def test_run_generation_generation_modes_in_log(tmp_path):
     """Test 16: generation_log["generation_modes"] == ["T2V", "I2V", "I2V"]."""
-    result = run_generation(COMPILED_DICT, "run016", tmp_path, seed=42015)
+    result = run_generation(COMPILED_DICT, "run016", tmp_path, seed=42015, dry_run=True)
     assert result["generation_log"]["generation_modes"] == ["T2V", "I2V", "I2V"]

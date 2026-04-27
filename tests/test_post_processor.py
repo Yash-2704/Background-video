@@ -77,7 +77,7 @@ def passing_temporal():
 def synthetic_raw_loop(tmp_path_factory, compiled_dict):
     """Real MP4 file produced by run_generation() in dry_run mode."""
     tmp = tmp_path_factory.mktemp("gen")
-    result = run_generation(compiled_dict, "test_clip_001", tmp)
+    result = run_generation(compiled_dict, "test_clip_001", tmp, dry_run=True)
     return Path(result["raw_loop_path"])
 
 
@@ -562,3 +562,128 @@ def test_import_does_not_load_torch_or_diffusers():
     # Module is already imported — check sys.modules
     assert "torch"     not in _sys.modules, "torch must not be imported by post_processor"
     assert "diffusers" not in _sys.modules, "diffusers must not be imported by post_processor"
+
+
+# ── NEW TESTS: dead-weight removal verification (A–F) ────────────────────────────
+
+from unittest.mock import patch
+from core.post_processor import (
+    generate_anchor_mask as _real_gam,
+    apply_lut_grade      as _real_alg,
+)
+
+
+@pytest.fixture(scope="module")
+def minimal_raw_loop(tmp_path_factory):
+    """Minimal synthetic 10-frame MP4 that does NOT call run_generation().
+    Used by new tests so they are independent of ML-package availability."""
+    tmp = tmp_path_factory.mktemp("minimal")
+    out = tmp / "minimal_raw.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(out), fourcc, 24.0, (1280, 736))
+    for _ in range(10):
+        writer.write(np.zeros((736, 1280, 3), dtype=np.uint8))
+    writer.release()
+    return out
+
+
+@pytest.fixture(scope="module")
+def minimal_compiled():
+    return {
+        "positive":          "test prompt",
+        "motion":            "gentle drift",
+        "negative":          "",
+        "selected_lut":      "cool_authority",
+        "input_hash_short":  "aabbccdd",
+        "compiler_version":  "1.0.0",
+    }
+
+
+@pytest.fixture(scope="module")
+def new_test_result(minimal_raw_loop, passing_decode, passing_temporal, minimal_compiled, seam_frames, tmp_path_factory):
+    """Full dry-run result using the minimal raw loop (no run_generation())."""
+    tmp = tmp_path_factory.mktemp("new_tests")
+    return run_post_processing(
+        clip_id="new_test_clip",
+        raw_loop_path=minimal_raw_loop,
+        decode_probe=passing_decode,
+        compiled=minimal_compiled,
+        seam_frames_playable=seam_frames,
+        output_dir=tmp,
+        dry_run=True,
+        temporal_probe=passing_temporal,
+    )
+
+
+# TEST A — assess_content_risk is never called during run_post_processing
+def test_assess_content_risk_not_called(
+    minimal_raw_loop, passing_decode, passing_temporal, minimal_compiled, seam_frames, tmp_path
+):
+    with patch("core.post_processor.assess_content_risk") as mock_risk:
+        run_post_processing(
+            clip_id="test_a",
+            raw_loop_path=minimal_raw_loop,
+            decode_probe=passing_decode,
+            compiled=minimal_compiled,
+            seam_frames_playable=seam_frames,
+            output_dir=tmp_path,
+            dry_run=True,
+            temporal_probe=passing_temporal,
+        )
+    assert mock_risk.call_count == 0
+
+
+# TEST B — generate_anchor_mask is called exactly once per run
+def test_generate_anchor_mask_called_once(
+    minimal_raw_loop, passing_decode, passing_temporal, minimal_compiled, seam_frames, tmp_path
+):
+    with patch("core.post_processor.generate_anchor_mask", wraps=_real_gam) as mock_gam:
+        run_post_processing(
+            clip_id="test_b",
+            raw_loop_path=minimal_raw_loop,
+            decode_probe=passing_decode,
+            compiled=minimal_compiled,
+            seam_frames_playable=seam_frames,
+            output_dir=tmp_path,
+            dry_run=True,
+            temporal_probe=passing_temporal,
+        )
+    assert mock_gam.call_count == 1
+
+
+# TEST C — apply_lut_grade is called exactly once per run
+def test_apply_lut_grade_called_once(
+    minimal_raw_loop, passing_decode, passing_temporal, minimal_compiled, seam_frames, tmp_path
+):
+    with patch("core.post_processor.apply_lut_grade", wraps=_real_alg) as mock_lut:
+        run_post_processing(
+            clip_id="test_c",
+            raw_loop_path=minimal_raw_loop,
+            decode_probe=passing_decode,
+            compiled=minimal_compiled,
+            seam_frames_playable=seam_frames,
+            output_dir=tmp_path,
+            dry_run=True,
+            temporal_probe=passing_temporal,
+        )
+    assert mock_lut.call_count == 1
+
+
+# TEST D — output dict contains every required key
+def test_output_dict_contains_all_required_keys(new_test_result):
+    required = {
+        "clip_id", "upscaled", "masks", "risks", "graded_variants",
+        "selected_lut", "luts_generated", "final", "preview_gif",
+        "preview_manifest", "decode_probe_path", "temporal_probe_path",
+    }
+    assert required.issubset(set(new_test_result.keys()))
+
+
+# TEST E — masks dict has all 3 position keys
+def test_masks_dict_has_all_three_position_keys(new_test_result):
+    assert set(new_test_result["masks"].keys()) == {"center", "lower_third", "upper_third"}
+
+
+# TEST F — graded_variants has exactly 1 key (the selected LUT only)
+def test_graded_variants_has_exactly_one_key(new_test_result):
+    assert len(new_test_result["graded_variants"]) == 1

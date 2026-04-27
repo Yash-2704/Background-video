@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import EditorialForm from './components/EditorialForm.jsx'
+import PromptForm from './components/PromptForm.jsx'
 import RunMonitor from './components/RunMonitor.jsx'
 import BundleViewer from './components/BundleViewer.jsx'
 import PrototypeViewer from './components/PrototypeViewer.jsx'
@@ -48,7 +48,7 @@ export default function App() {
       </header>
       <main>
         {currentScreen === 'form' && (
-          <EditorialForm onCompileSuccess={handleCompileSuccess} />
+          <PromptForm onCompileSuccess={handleCompileSuccess} />
         )}
         {/* Keep RunMonitor mounted once compileResult is set so its state is
             preserved when BundleViewer is shown and Back is clicked. */}

@@ -93,7 +93,7 @@ def dry_post_result(tmp_path, canonical_compiled, dry_decode, dry_temporal):
     Integration fixture: real files on disk from run_generation() + run_post_processing().
     The assembler will be able to verify these paths exist.
     """
-    gen_result = run_generation(canonical_compiled, _CLIP_ID, tmp_path)
+    gen_result = run_generation(canonical_compiled, _CLIP_ID, tmp_path, dry_run=True)
     post = run_post_processing(
         clip_id=_CLIP_ID,
         raw_loop_path=Path(gen_result["raw_loop_path"]),
@@ -112,7 +112,7 @@ def integration_bundle(tmp_path, canonical_compiled, dry_decode, dry_temporal, d
     """
     Full integration bundle: consistent paths for run_metadata_assembly tests.
     """
-    gen_result = run_generation(canonical_compiled, _CLIP_ID, tmp_path)
+    gen_result = run_generation(canonical_compiled, _CLIP_ID, tmp_path, dry_run=True)
     post = run_post_processing(
         clip_id=_CLIP_ID,
         raw_loop_path=Path(gen_result["raw_loop_path"]),
@@ -185,7 +185,7 @@ def test_05_assemble_metadata_top_level_keys(
     )
     expected_keys = {
         "module", "module_version", "clip_id", "schema_version",
-        "dev_mode", "timestamp_utc", "environment", "generation",
+        "timestamp_utc", "environment", "generation",
         "prompt_provenance", "user_input", "quality_gates",
         "post_processing", "files",
     }

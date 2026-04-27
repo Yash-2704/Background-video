@@ -279,7 +279,6 @@ def assemble_metadata(
         "module_version":   "1.1",
         "clip_id":          clip_id,
         "schema_version":   "1.0",
-        "dev_mode":         GC["dev_mode"],
         "timestamp_utc":    datetime.utcnow().isoformat() + "Z",
 
         "environment": {

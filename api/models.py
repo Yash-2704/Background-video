@@ -141,7 +141,7 @@ class HealthResponse(BaseModel):
     status:           Literal["ok"]
     module:           str   # "bg_video"
     module_version:   str   # "1.1"
-    dev_mode:         bool
+    dev_mode:         Optional[bool] = None
     compiler_version: str
 
 
@@ -152,3 +152,18 @@ class ValidInputsResponse(BaseModel):
     color_temperature: list[str]
     mood:              list[str]
     motion_intensity:  list[str]
+
+
+class ParseRequest(BaseModel):
+    prompt: str
+
+
+class ParseResponse(BaseModel):
+    category:          str
+    location_feel:     str
+    time_of_day:       str
+    color_temperature: str
+    mood:              str
+    motion_intensity:  str
+    original_prompt:   str
+    inference_notes:   str = ""

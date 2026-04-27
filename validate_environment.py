@@ -74,8 +74,6 @@ GEN_REQUIRED_KEYS = [
     "quality_gates",
     "lut_options",
     "lut_specifications",
-    "dev_mode",
-    "production_note",
 ]
 
 MODEL_COMMIT_HASH_UNSET_PLACEHOLDER = "[locked at first successful run]"

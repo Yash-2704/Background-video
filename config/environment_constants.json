@@ -14,5 +14,7 @@
   "interpolation_status": "optional — crossfade blending only. Not used for fps conversion.",
   "temporal_probe_library": "opencv-python==4.9.0",
   "ssim_library": "scikit-image==0.22.0",
-  "ffmpeg_version": "6.0"
+  "ffmpeg_version": "6.0",
+  "compiler_model": "llama-3.3-70b-versatile",
+  "compiler_system_prompt_hash": "pending"
 }

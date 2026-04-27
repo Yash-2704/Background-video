@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from api.models import HealthResponse, ValidInputsResponse
-from api.routes import bundle, compile, generate, prototype, status
+from api.routes import bundle, compile, generate, parse, prototype, status
 from core.prompt_compiler import get_all_valid_inputs
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -25,8 +25,6 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _GEN_CONSTANTS = json.loads(
     (_PROJECT_ROOT / "config" / "generation_constants.json").read_text(encoding="utf-8")
 )
-_DEV_MODE: bool = bool(_GEN_CONSTANTS.get("dev_mode", True))
-
 COMPILER_VERSION = "1.0.0"
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -51,6 +49,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 _PREFIX = "/api/v1"
 app.include_router(compile.router, prefix=_PREFIX)
+app.include_router(parse.router, prefix=_PREFIX)
 app.include_router(generate.router, prefix=_PREFIX)
 app.include_router(status.router, prefix=_PREFIX)
 app.include_router(bundle.router, prefix=_PREFIX)
@@ -71,7 +70,6 @@ def health() -> HealthResponse:
         status="ok",
         module="bg_video",
         module_version="1.1",
-        dev_mode=_DEV_MODE,
         compiler_version=COMPILER_VERSION,
     )
 

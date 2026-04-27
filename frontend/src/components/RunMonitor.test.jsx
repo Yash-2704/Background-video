@@ -7,12 +7,13 @@ import App from '../App.jsx'
 import FORM_OPTIONS from '../config/formOptions.js'
 
 vi.mock('../api/client', () => ({
+  parsePrompt:      vi.fn(),
   submitGeneration: vi.fn(),
   getRunStatus:     vi.fn(),
   compilePrompts:   vi.fn(),
 }))
 
-import { submitGeneration, getRunStatus, compilePrompts } from '../api/client'
+import { parsePrompt, submitGeneration, getRunStatus, compilePrompts } from '../api/client'
 
 const mockCompileResult = {
   input_hash_short:  'b2e7f3',
@@ -386,27 +387,28 @@ describe('Elapsed timer', () => {
   })
 })
 
-// ── EditorialForm / App.jsx integration ─────────────────────────────────────
+// ── PromptForm / App.jsx integration ─────────────────────────────────────────
 
 describe('EditorialForm App.jsx integration', () => {
   async function fillAndCompile(user) {
-    const selects = screen.getAllByRole('combobox')
-    const fields = [
-      'category', 'location_feel', 'time_of_day',
-      'color_temperature', 'mood', 'motion_intensity',
-    ]
-    for (let i = 0; i < fields.length; i++) {
-      await user.selectOptions(selects[i], FORM_OPTIONS[fields[i]][0].value)
-    }
-    await user.click(screen.getByRole('button', { name: /compile prompts/i }))
+    parsePrompt.mockResolvedValue({
+      ...mockFormData,
+      original_prompt: 'test prompt',
+      inference_notes: '',
+    })
+    await user.type(screen.getByRole('textbox'), 'test prompt')
+    await user.click(screen.getByRole('button', { name: /interpret/i }))
+    await screen.findByText('Interpreted as:')
+    await user.click(screen.getByRole('button', { name: /confirm/i }))
   }
 
-  it('27. App renders EditorialForm initially', () => {
+  it('27. App renders PromptForm initially', () => {
     render(<App />)
-    expect(screen.getByRole('button', { name: /compile prompts/i })).toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /interpret/i })).toBeInTheDocument()
   })
 
-  it('28. After EditorialForm calls onCompileSuccess, App renders RunMonitor (not EditorialForm)', async () => {
+  it('28. After PromptForm calls onCompileSuccess, App renders RunMonitor (not PromptForm)', async () => {
     compilePrompts.mockResolvedValue(mockCompileResult)
     submitGeneration.mockResolvedValue({ run_id: 'bg_001_b2e7f3', status: 'running', stages: {} })
     getRunStatus.mockResolvedValue({ status: 'running', stages: {} })
@@ -416,12 +418,12 @@ describe('EditorialForm App.jsx integration', () => {
     await fillAndCompile(user)
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /compile prompts/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: /← new run/i })).toBeInTheDocument()
     })
   })
 
-  it('29. Clicking "← New Run" in RunMonitor causes App to render EditorialForm again', async () => {
+  it('29. Clicking "← New Run" in RunMonitor causes App to render PromptForm again', async () => {
     compilePrompts.mockResolvedValue(mockCompileResult)
     submitGeneration.mockResolvedValue({ run_id: 'bg_001_b2e7f3', status: 'running', stages: {} })
     getRunStatus.mockResolvedValue({ status: 'running', stages: {} })
@@ -437,7 +439,7 @@ describe('EditorialForm App.jsx integration', () => {
     await user.click(screen.getByRole('button', { name: /← new run/i }))
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /compile prompts/i })).toBeInTheDocument()
+      expect(screen.getByRole('textbox')).toBeInTheDocument()
     )
   })
 })

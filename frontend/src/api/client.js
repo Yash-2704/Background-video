@@ -1,4 +1,27 @@
 const API_BASE = 'http://100.92.126.27:8000'
+export async function parsePrompt(prompt) {
+  let response
+  try {
+    response = await fetch(`${API_BASE}/api/v1/parse-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    })
+  } catch (networkError) {
+    throw new Error(`Network error reaching parse endpoint: ${networkError.message}`)
+  }
+
+  if (!response.ok) {
+    if (response.status === 500) {
+      throw new Error('The interpret service is not available yet. Please contact the operator.')
+    }
+    const text = await response.text()
+    throw new Error(`Parse failed: ${response.status} ${text}`)
+  }
+
+  return response.json()
+}
+
 export async function compilePrompts(formData) {
   let response
   try {

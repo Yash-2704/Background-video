@@ -18,14 +18,17 @@ Test count breakdown:
 
 import sys
 import cv2
+import numpy as np
 import pytest
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 from core.probes import (
     run_decode_probe,
     run_temporal_probe,
     get_probe_schema,
     GENERATION_CONSTANTS,
+    PROBE_SAMPLE_EVERY_N,
 )
 from core.generator import run_generation
 
@@ -57,6 +60,7 @@ def synthetic_clip_path(tmp_path_factory):
         run_id="test_probe_run",
         output_dir=out_dir,
         seed=42000,
+        dry_run=True,
     )
     return Path(result["raw_loop_path"])
 
@@ -213,4 +217,108 @@ class TestRegression:
         assert "torch" not in sys.modules, "torch must not be imported by core.probes"
         assert "diffusers" not in sys.modules, (
             "diffusers must not be imported by core.probes"
+        )
+
+
+# ── NEW TESTS — sampling optimisation ────────────────────────────────────────────
+
+def _make_synthetic_video(path: Path, num_frames: int, pixel_value: int = 128) -> None:
+    """Write a solid-colour MP4 using cv2.VideoWriter. Width/height chosen to be
+    small so tests run fast; pixel_value sets all BGR channels identically."""
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(path), fourcc, 24.0, (64, 64))
+    frame = np.full((64, 64, 3), pixel_value, dtype=np.uint8)
+    for _ in range(num_frames):
+        writer.write(frame)
+    writer.release()
+
+
+class TestSamplingConstant:
+
+    def test_A_probe_sample_every_n_equals_6(self):
+        assert PROBE_SAMPLE_EVERY_N == 6
+
+
+class TestSampledFramesKey_DryRun:
+
+    def test_B_sampled_frames_key_present_and_positive_in_dry_run(self, tmp_path):
+        result = run_decode_probe(tmp_path / "nonexistent.mp4", dry_run=True)
+        assert "sampled_frames" in result
+        assert isinstance(result["sampled_frames"], int)
+        assert result["sampled_frames"] > 0
+
+
+class TestSampledFramesKey_Live:
+
+    def test_C_sampled_frames_less_than_total_in_live_path(self, tmp_path):
+        video_path = tmp_path / "short_clip.mp4"
+        total_frames = 12
+        _make_synthetic_video(video_path, total_frames)
+
+        # Force the cv2 fallback by making FFmpeg appear unavailable.
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = run_decode_probe(video_path, dry_run=False)
+
+        assert result["sampled_frames"] < total_frames, (
+            f"Expected sampled_frames ({result['sampled_frames']}) < "
+            f"total_frames ({total_frames})"
+        )
+
+    def test_D_all_required_keys_present_in_dry_run(self, tmp_path):
+        result = run_decode_probe(tmp_path / "nonexistent.mp4", dry_run=True)
+        required = [
+            "mean_luminance",
+            "luminance_range",
+            "dominant_hue_degrees",
+            "saturation_mean",
+            "luminance_gate_min",
+            "luminance_gate_max",
+            "dry_run",
+            "sampled_frames",
+        ]
+        for key in required:
+            assert key in result, f"Missing key in dry_run result: {key}"
+
+    def test_E_empty_video_fallback_does_not_crash(self, tmp_path):
+        video_path = tmp_path / "empty_clip.mp4"
+        # Create a minimal but unreadable video by writing 0 frames.
+        _make_synthetic_video(video_path, num_frames=0)
+
+        # Patch cv2.VideoCapture so read() always returns (False, None),
+        # simulating a video with 0 readable frames.
+        original_vc = cv2.VideoCapture
+
+        class _AlwaysFailCapture:
+            def __init__(self, *args, **kwargs):
+                self._delegate = original_vc(*args, **kwargs)
+
+            def read(self):
+                return False, None
+
+            def release(self):
+                self._delegate.release()
+
+            def isOpened(self):
+                return True
+
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            with patch("cv2.VideoCapture", _AlwaysFailCapture):
+                result = run_decode_probe(video_path, dry_run=False)
+
+        assert isinstance(result, dict), "Expected a dict even for empty video"
+        assert result["sampled_frames"] == 0
+
+    def test_F_mean_luminance_numerically_stable_under_sampling(self, tmp_path):
+        pixel_value = 128
+        video_path = tmp_path / "uniform_clip.mp4"
+        _make_synthetic_video(video_path, num_frames=30, pixel_value=pixel_value)
+
+        expected_luminance = pixel_value / 255.0
+
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = run_decode_probe(video_path, dry_run=False)
+
+        assert abs(result["mean_luminance"] - expected_luminance) <= 0.05, (
+            f"mean_luminance {result['mean_luminance']:.4f} deviates more than 0.05 "
+            f"from expected {expected_luminance:.4f}"
         )

@@ -35,7 +35,6 @@ with _GEN_CONFIG_PATH.open("r", encoding="utf-8") as _fh:
 with _ENV_CONFIG_PATH.open("r", encoding="utf-8") as _fh:
     ENV_CONSTANTS: dict = json.load(_fh)
 
-DRY_RUN:    bool = bool(GENERATION_CONSTANTS["dev_mode"])
 OUTPUT_DIR: Path = PROJECT_ROOT / "output"
 
 # TODO (production): replace with Redis or a persistent DB.
@@ -160,7 +159,7 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
 
         decode_probe = run_decode_probe(
             Path(gen_result["raw_loop_path"]),
-            dry_run=DRY_RUN,
+            dry_run=False,
         )
 
         _set_stage(run_id, "probe_decode", "complete")
@@ -211,7 +210,7 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
             compiled=compiled,
             seam_frames_playable=gen_result["seam_frames_playable"],
             output_dir=OUTPUT_DIR,
-            dry_run=DRY_RUN,
+            dry_run=False,
             temporal_probe=temporal_probe,
         )
 

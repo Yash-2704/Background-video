@@ -9,6 +9,7 @@ import FORM_OPTIONS from '../config/formOptions.js'
 // ── Mock API client ───────────────────────────────────────────────────────────
 
 vi.mock('../api/client', () => ({
+  parsePrompt:      vi.fn(),
   submitGeneration: vi.fn(),
   getRunStatus:     vi.fn(),
   compilePrompts:   vi.fn(),
@@ -16,6 +17,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import {
+  parsePrompt,
   submitGeneration,
   getRunStatus,
   compilePrompts,
@@ -588,21 +590,27 @@ const mockRunResultComplete = {
 }
 
 async function fillAndCompile(user) {
-  const selects = screen.getAllByRole('combobox')
-  const fields = [
-    'category', 'location_feel', 'time_of_day',
-    'color_temperature', 'mood', 'motion_intensity',
-  ]
-  for (let i = 0; i < fields.length; i++) {
-    await user.selectOptions(selects[i], FORM_OPTIONS[fields[i]][0].value)
-  }
-  await user.click(screen.getByRole('button', { name: /compile prompts/i }))
+  parsePrompt.mockResolvedValueOnce({
+    category:          'Breaking News',
+    location_feel:     'Urban',
+    time_of_day:       'Night',
+    color_temperature: 'Cool',
+    mood:              'Tense',
+    motion_intensity:  'slow',
+    original_prompt:   'test prompt',
+    inference_notes:   '',
+  })
+  await user.type(screen.getByRole('textbox'), 'test prompt')
+  await user.click(screen.getByRole('button', { name: /interpret/i }))
+  await screen.findByText('Interpreted as:')
+  await user.click(screen.getByRole('button', { name: /confirm/i }))
 }
 
 describe('App.jsx three-screen flow', () => {
-  it('33. App renders EditorialForm initially', () => {
+  it('33. App renders PromptForm initially', () => {
     render(<App />)
-    expect(screen.getByRole('button', { name: /compile prompts/i })).toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /interpret/i })).toBeInTheDocument()
   })
 
   it('34. After onCompileSuccess, App renders RunMonitor', async () => {
@@ -615,7 +623,7 @@ describe('App.jsx three-screen flow', () => {
     await fillAndCompile(user)
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /compile prompts/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: /← new run/i })).toBeInTheDocument()
     })
   })
@@ -662,7 +670,7 @@ describe('App.jsx three-screen flow', () => {
     const submitCallsBefore = submitGeneration.mock.calls.length
     await user.click(screen.getByRole('button', { name: /← back to monitor/i }))
 
-    // Should return to RunMonitor (← New Run button visible, not EditorialForm)
+    // Should return to RunMonitor (← New Run button visible, not PromptForm)
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /← new run/i })).toBeInTheDocument()
     )
@@ -670,7 +678,123 @@ describe('App.jsx three-screen flow', () => {
     // submitGeneration must NOT have been called again (no re-run)
     expect(submitGeneration.mock.calls.length).toBe(submitCallsBefore)
 
-    // EditorialForm must not be visible (still on monitor, not form)
-    expect(screen.queryByRole('button', { name: /compile prompts/i })).not.toBeInTheDocument()
+    // PromptForm must not be visible (still on monitor, not form)
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   }, 10000)
+})
+
+// ── NEW TESTS — Data shape resilience (Changes A–C) ───────────────────────────
+
+describe('NEW TESTS — sampled_frames display', () => {
+  it('TEST A — renders sampled_frames value when present', async () => {
+    const metadataWithSampledFrames = {
+      ...mockMetadata,
+      quality_gates: {
+        ...mockMetadata.quality_gates,
+        sampled_frames: 87,
+      },
+    }
+    fetchBundleFile.mockResolvedValue(metadataWithSampledFrames)
+    renderViewer()
+    await waitFor(() => expect(screen.getByText('87')).toBeInTheDocument())
+  })
+
+  it('TEST B — renders "—" for sampled_frames when absent', async () => {
+    const metadataWithoutSampledFrames = {
+      ...mockMetadata,
+      quality_gates: {
+        mean_luminance: 0.46,
+        luminance_gate: 'pass',
+        flicker_index: 0.003,
+        warping_artifact_score: 0.018,
+        scene_cut_detected: false,
+        perceptual_loop_score: 0.94,
+        overall: 'pass',
+        // sampled_frames intentionally absent
+      },
+    }
+    fetchBundleFile.mockResolvedValue(metadataWithoutSampledFrames)
+    renderViewer()
+    await waitFor(() => {
+      expect(screen.getByText('Sampled Frames')).toBeInTheDocument()
+    })
+    // The InfoRow for Sampled Frames must show '—'
+    const labels = screen.getAllByText('—')
+    expect(labels.length).toBeGreaterThan(0)
+  })
+})
+
+describe('NEW TESTS — luts_generated resilience', () => {
+  it('TEST C — renders correctly with single-element luts_generated', async () => {
+    const metadataSingleLut = {
+      ...mockMetadata,
+      post_processing: {
+        ...mockMetadata.post_processing,
+        luts_generated: ['cool_authority'],
+      },
+    }
+    fetchBundleFile.mockResolvedValue(metadataSingleLut)
+    renderViewer()
+    await waitFor(() => {
+      // "cool_authority" appears in both Selected LUT and LUTs Generated rows;
+      // assert that none of those occurrences contain a trailing comma
+      const matches = screen.getAllByText('cool_authority')
+      expect(matches.length).toBeGreaterThan(0)
+      matches.forEach((el) => expect(el.textContent).not.toMatch(/cool_authority,/))
+    })
+  })
+
+  it('TEST D — does not crash when luts_generated is null', async () => {
+    const metadataNullLuts = {
+      ...mockMetadata,
+      post_processing: {
+        ...mockMetadata.post_processing,
+        luts_generated: null,
+      },
+    }
+    fetchBundleFile.mockResolvedValue(metadataNullLuts)
+    renderViewer()
+    await waitFor(() => {
+      expect(screen.getByText('LUTs Generated')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('NEW TESTS — masks_generated resilience', () => {
+  it('TEST E — does not crash when masks_generated is null', async () => {
+    const metadataNullMasks = {
+      ...mockMetadata,
+      post_processing: {
+        ...mockMetadata.post_processing,
+        masks_generated: null,
+      },
+    }
+    fetchBundleFile.mockResolvedValue(metadataNullMasks)
+    renderViewer()
+    await waitFor(() => {
+      expect(screen.getByText('Masks Generated')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('NEW TESTS — missing section resilience', () => {
+  it('TEST F — does not crash when post_processing section is absent', async () => {
+    const metadataNoPostProcessing = { ...mockMetadata }
+    delete metadataNoPostProcessing.post_processing
+    fetchBundleFile.mockResolvedValue(metadataNoPostProcessing)
+    renderViewer()
+    await waitFor(() => {
+      expect(screen.getByText('Post Processing')).toBeInTheDocument()
+    })
+  })
+
+  it('TEST G — does not crash when quality_gates section is absent', async () => {
+    const metadataNoQualityGates = { ...mockMetadata }
+    delete metadataNoQualityGates.quality_gates
+    fetchBundleFile.mockResolvedValue(metadataNoQualityGates)
+    renderViewer()
+    await waitFor(() => {
+      expect(screen.getByText('Quality Gates')).toBeInTheDocument()
+    })
+  })
 })

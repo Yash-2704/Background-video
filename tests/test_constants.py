@@ -68,8 +68,6 @@ GEN_REQUIRED_KEYS = [
     "quality_gates",
     "lut_options",
     "lut_specifications",
-    "dev_mode",
-    "production_note",
 ]
 
 
@@ -133,14 +131,12 @@ def test_luminance_gate_range(gen_cfg):
     )
 
 
-# ── Test 6: extensions_per_clip == 2 when dev_mode is true ───────────────────
+# ── Test 6: extensions_per_clip == 4 (dev_mode removed, production value) ─────
 def test_dev_mode_extensions_cap(gen_cfg):
-    """When dev_mode is true, extensions_per_clip must be capped at 2."""
-    if gen_cfg["dev_mode"]:
-        assert gen_cfg["extensions_per_clip"] == 2, (
-            f"dev_mode is true but extensions_per_clip is {gen_cfg['extensions_per_clip']} "
-            "(expected 2 — production cap is 4)"
-        )
+    """extensions_per_clip must be 4 now that dev_mode is removed."""
+    assert gen_cfg["extensions_per_clip"] == 4, (
+        f"extensions_per_clip must be 4, got {gen_cfg['extensions_per_clip']}"
+    )
 
 
 # ── Test 7: generate_resolution has exactly 2 integer elements ───────────────
