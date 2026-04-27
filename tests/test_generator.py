@@ -10,7 +10,7 @@ has no runtime dependency on prompt_compiler.py.
 
 import shutil
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cv2
 import pytest
@@ -96,8 +96,9 @@ def test_run_generation_raw_loop_is_valid_mp4(tmp_path):
 
 
 def test_run_generation_seam_frames_raw_are_positive_ints(tmp_path):
-    """Test 4: seam_frames_raw is a list of 2 positive integers."""
-    result = run_generation(COMPILED_DICT, "run004", tmp_path, seed=42003, dry_run=True)
+    """Test 4: seam_frames_raw is a list of 2 positive integers (3-clip mode)."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 2}):
+        result = run_generation(COMPILED_DICT, "run004", tmp_path, seed=42003, dry_run=True)
     sfr = result["seam_frames_raw"]
     assert isinstance(sfr, list)
     assert len(sfr) == 2
@@ -105,21 +106,24 @@ def test_run_generation_seam_frames_raw_are_positive_ints(tmp_path):
 
 
 def test_run_generation_playable_seam_less_than_raw_seam(tmp_path):
-    """Test 5: seam_frames_playable[0] < seam_frames_raw[0]."""
-    result = run_generation(COMPILED_DICT, "run005", tmp_path, seed=42004, dry_run=True)
+    """Test 5: seam_frames_playable[0] < seam_frames_raw[0] (3-clip mode)."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 2}):
+        result = run_generation(COMPILED_DICT, "run005", tmp_path, seed=42004, dry_run=True)
     assert result["seam_frames_playable"][0] < result["seam_frames_raw"][0]
 
 
 def test_run_generation_seeds_used_in_log(tmp_path):
-    """Test 6: generation_log seeds_used == [seed, seed+1, seed+2]."""
-    result = run_generation(COMPILED_DICT, "run006", tmp_path, seed=50000, dry_run=True)
+    """Test 6: generation_log seeds_used == [seed, seed+1, seed+2] (3-clip mode)."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 2}):
+        result = run_generation(COMPILED_DICT, "run006", tmp_path, seed=50000, dry_run=True)
     seed   = result["seed"]
     assert result["generation_log"]["seeds_used"] == [seed, seed + 1, seed + 2]
 
 
 def test_run_generation_clips_generated_in_log(tmp_path):
-    """Test 7: generation_log clips_generated == 3."""
-    result = run_generation(COMPILED_DICT, "run007", tmp_path, seed=42006, dry_run=True)
+    """Test 7: generation_log clips_generated == 3 (3-clip mode)."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 2}):
+        result = run_generation(COMPILED_DICT, "run007", tmp_path, seed=42006, dry_run=True)
     assert result["generation_log"]["clips_generated"] == 3
 
 
@@ -240,6 +244,140 @@ def test_run_generation_assigns_seed_in_valid_range(tmp_path):
 
 
 def test_run_generation_generation_modes_in_log(tmp_path):
-    """Test 16: generation_log["generation_modes"] == ["T2V", "I2V", "I2V"]."""
-    result = run_generation(COMPILED_DICT, "run016", tmp_path, seed=42015, dry_run=True)
+    """Test 16: generation_log["generation_modes"] == ["T2V", "I2V", "I2V"] (3-clip mode)."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 2}):
+        result = run_generation(COMPILED_DICT, "run016", tmp_path, seed=42015, dry_run=True)
     assert result["generation_log"]["generation_modes"] == ["T2V", "I2V", "I2V"]
+
+
+# ── NEW TESTS ──────────────────────────────────────────────────────────────────
+
+def test_single_clip_skips_crossfade_join(tmp_path):
+    """NEW TEST A: with extensions_per_clip=0, crossfade_join is never called."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 0}):
+        with patch("core.generator.crossfade_join") as mock_join:
+            run_generation(COMPILED_DICT, "runA", tmp_path, seed=42100, dry_run=True)
+    assert mock_join.call_count == 0
+
+
+def test_single_clip_join_result_keys(tmp_path):
+    """NEW TEST B: single-clip mode produces join_result with all 5 required keys and empty seams."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 0}):
+        result = run_generation(COMPILED_DICT, "runB", tmp_path, seed=42101, dry_run=True)
+    log = result["generation_log"]
+    required = {"seam_frames_raw", "seam_frames_playable", "total_frames_raw", "playable_frames"}
+    assert required.issubset(log.keys())
+    assert result["seam_frames_raw"] == []
+    assert result["seam_frames_playable"] == []
+
+
+def test_single_clip_clips_generated_equals_one(tmp_path):
+    """NEW TEST C: generation_log clips_generated == 1 in single-clip mode."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 0}):
+        result = run_generation(COMPILED_DICT, "runC", tmp_path, seed=42102, dry_run=True)
+    assert result["generation_log"]["clips_generated"] == 1
+
+
+def test_three_clip_mode_calls_crossfade_join_once(tmp_path):
+    """NEW TEST D: with extensions_per_clip=2, crossfade_join is called exactly once."""
+    with patch.dict(GENERATION_CONSTANTS, {"extensions_per_clip": 2}):
+        with patch("core.generator.crossfade_join", wraps=crossfade_join) as mock_join:
+            run_generation(COMPILED_DICT, "runD", tmp_path, seed=42103, dry_run=True)
+    assert mock_join.call_count == 1
+
+
+# ── NEW TESTS (H.264 re-encode) ────────────────────────────────────────────────
+
+@pytest.mark.skip(reason="requires RTX 4090")
+def test_generate_clip_live_produces_h264(tmp_path):
+    """TEST A: generate_clip() live path re-encodes to H.264 and file exists after."""
+    out = tmp_path / "live_clip.mp4"
+    generate_clip(
+        positive="test positive",
+        motion="test motion",
+        negative="test negative",
+        seed=12345,
+        clip_index=0,
+        output_path=out,
+        dry_run=False,
+    )
+    assert out.exists()
+    cap = cv2.VideoCapture(str(out))
+    assert cap.isOpened()
+    cap.release()
+    assert not (tmp_path / "live_clip_h264tmp.mp4").exists()
+
+
+@pytest.mark.skip(reason="requires RTX 4090")
+def test_generate_clip_live_reencode_cleanup_on_failure(tmp_path):
+    """TEST B: on FFmpeg re-encode failure, _h264tmp is cleaned up and RuntimeError raised."""
+    import subprocess as _sp_mod
+    out = tmp_path / "live_clip.mp4"
+    h264_tmp = tmp_path / "live_clip_h264tmp.mp4"
+
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stderr = b"mock ffmpeg error"
+
+    with patch.object(_sp_mod, "run", return_value=mock_result):
+        with pytest.raises(RuntimeError):
+            generate_clip(
+                positive="test positive",
+                motion="test motion",
+                negative="test negative",
+                seed=12345,
+                clip_index=0,
+                output_path=out,
+                dry_run=False,
+            )
+
+    assert not h264_tmp.exists()
+
+
+def test_generate_clip_dry_run_does_not_call_subprocess(tmp_path):
+    """TEST C: generate_clip() with dry_run=True never calls subprocess.run."""
+    import subprocess as _sp_mod
+    out = tmp_path / "dry_clip.mp4"
+    with patch.object(_sp_mod, "run") as mock_sp:
+        generate_clip(
+            positive="test positive",
+            motion="test motion",
+            negative="test negative",
+            seed=12345,
+            clip_index=0,
+            output_path=out,
+            dry_run=True,
+        )
+    assert mock_sp.call_count == 0
+
+
+def test_generate_clip_dry_run_does_not_call_imageio(tmp_path):
+    """TEST D: generate_clip() with dry_run=True never calls imageio.get_writer."""
+    out = tmp_path / "dry_clip_imageio.mp4"
+    with patch("imageio.get_writer") as mock_writer:
+        generate_clip(
+            positive="test positive",
+            motion="test motion",
+            negative="test negative",
+            seed=12345,
+            clip_index=0,
+            output_path=out,
+            dry_run=True,
+        )
+    assert mock_writer.call_count == 0
+
+
+@pytest.mark.skip(reason="requires RTX 4090")
+def test_generate_clip_live_imageio_output_exists(tmp_path):
+    """TEST E: generate_clip() live path via imageio produces an existing output file."""
+    out = tmp_path / "live_imageio_clip.mp4"
+    generate_clip(
+        positive="test positive",
+        motion="test motion",
+        negative="test negative",
+        seed=12345,
+        clip_index=0,
+        output_path=out,
+        dry_run=False,
+    )
+    assert out.exists()

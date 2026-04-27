@@ -70,7 +70,6 @@ export default function App() {
             )}
           </>
         )}
-        {currentScreen === 'form' && <PrototypeViewer />}
       </main>
     </div>
   )

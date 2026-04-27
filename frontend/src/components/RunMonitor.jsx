@@ -109,7 +109,7 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
               stopIntervals()
               setRunResult(statusResponse)
               setRunStatus(statusResponse.status)
-              if (statusResponse.status === 'complete') {
+              if (statusResponse.status === 'complete' && statusResponse.gate_result?.overall !== 'raw_verify') {
                 onComplete(statusResponse)
               }
             }
@@ -119,7 +119,7 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
               setError(err.message)
             }
           }
-        }, 2000)
+        }, 60000)
       } catch (err) {
         if (!cancelledRef.current) {
           stopIntervals()

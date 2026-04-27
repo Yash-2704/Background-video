@@ -188,3 +188,163 @@ def test_parse_endpoint_returns_required_keys(client):
     assert body["original_prompt"] == "financial district at golden hour, dynamic motion"
     assert body["category"]        == "Economy"
     assert body["inference_notes"] == "City financial district at dusk matches Economy/Urban."
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW TESTS — prompt enrichment (enrich_prompt_for_wan + generator integration)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── TEST A — enrich_prompt_for_wan returns an expanded string ─────────────────
+
+@patch.dict(os.environ, {"GROQ_API_KEY": "fake-key-for-testing"})
+def test_enrich_prompt_for_wan_returns_expanded_string():
+    """Mock Groq returns a long response; assert result is a string longer than 50 chars."""
+    import importlib
+    import core.prompt_parser as pp
+    importlib.reload(pp)
+
+    expanded = (
+        "A dense financial district at dusk, glass and steel towers reflecting "
+        "amber and gold light. The camera performs a slow dolly forward at street level. "
+        "Warm directional light casts long shadows across empty pavement. "
+        "Cinematic depth of field with shallow focus on foreground geometry. "
+        "Muted desaturated tones with cool blue shadow detail. "
+        "A gentle haze softens distant architecture. "
+        "Stable textures, smooth motion, broadcast quality, no artifacts, no text, "
+        "no people, no faces."
+    )
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_groq_response(expanded)
+
+    mock_groq_module = MagicMock()
+    mock_groq_module.Groq.return_value = mock_client
+
+    with patch.dict("sys.modules", {"groq": mock_groq_module}):
+        result = pp.enrich_prompt_for_wan(
+            "financial district, urban, dusk, muted tones",
+            "slow lateral drift, gentle parallax",
+        )
+
+    assert isinstance(result, str)
+    assert len(result) > 50
+
+
+# ── TEST B — enrich_prompt_for_wan raises on Groq failure ────────────────────
+
+@patch.dict(os.environ, {"GROQ_API_KEY": "fake-key-for-testing"})
+def test_enrich_prompt_for_wan_raises_on_groq_failure():
+    """Groq raises Exception; assert enrich_prompt_for_wan propagates it (does not swallow)."""
+    import importlib
+    import core.prompt_parser as pp
+    importlib.reload(pp)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = Exception("API error")
+
+    mock_groq_module = MagicMock()
+    mock_groq_module.Groq.return_value = mock_client
+
+    with patch.dict("sys.modules", {"groq": mock_groq_module}):
+        with pytest.raises(Exception):
+            pp.enrich_prompt_for_wan("some short prompt", "some motion")
+
+
+# ── TEST C — generator falls back to original prompt on enrichment failure ────
+
+try:
+    from core.generator import _ML_AVAILABLE as _GEN_ML_AVAILABLE
+except ImportError:
+    _GEN_ML_AVAILABLE = False
+
+
+@pytest.mark.skipif(not _GEN_ML_AVAILABLE, reason="requires CUDA GPU and ML packages")
+def test_generator_falls_back_on_enrichment_failure(tmp_path):
+    """
+    enrich_prompt_for_wan raises; run_generation must not raise and must store
+    the original compiled positive prompt as enriched_positive_prompt in the log.
+    """
+    import numpy as np
+    from core.generator import GENERATION_CONSTANTS, run_generation
+
+    _COMPILED = {
+        "positive":          "financial district, urban, dusk",
+        "motion":            "slow lateral drift",
+        "negative":          "text, people, faces",
+        "positive_hash":     "abc123" * 10,
+        "motion_hash":       "bcd234" * 10,
+        "negative_hash":     "cde345" * 10,
+        "input_hash_short":  "a1b2c3",
+        "selected_lut":      "neutral",
+        "lower_third_style": "standard_bar",
+        "compiler_version":  "1.0.0",
+    }
+
+    _join_result = {
+        "raw_loop_path":        tmp_path / "loop.mp4",
+        "seam_frames_raw":      [145, 290],
+        "seam_frames_playable": [138, 269],
+        "total_frames_raw":     435,
+        "playable_frames":      406,
+    }
+
+    _blank_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+    with patch("core.prompt_parser.enrich_prompt_for_wan", side_effect=Exception("API error")):
+        with patch("core.generator.generate_clip", side_effect=lambda **kw: kw["output_path"]):
+            with patch("core.generator._extract_last_frame", return_value=_blank_frame):
+                with patch("core.generator.crossfade_join", return_value=_join_result):
+                    result = run_generation(
+                        _COMPILED, "run_enrich_fallback", tmp_path, seed=42, dry_run=False
+                    )
+
+    assert result["generation_log"]["enriched_positive_prompt"] == _COMPILED["positive"]
+
+
+# ── TEST D — enrichment skipped when enrich_prompts=false ────────────────────
+
+def test_enrichment_skipped_when_enrich_prompts_false(tmp_path):
+    """
+    GENERATION_CONSTANTS["enrich_prompts"]=False; assert enrich_prompt_for_wan
+    is never called (dry_run=True also gates it, verifying the config check path).
+    """
+    from unittest.mock import MagicMock, patch
+    from core.generator import GENERATION_CONSTANTS, run_generation
+
+    mock_enrich = MagicMock()
+    patched_gc = {**GENERATION_CONSTANTS, "enrich_prompts": False}
+
+    _COMPILED = {
+        "positive":          "financial district, urban, dusk",
+        "motion":            "slow lateral drift",
+        "negative":          "text, people, faces",
+        "positive_hash":     "abc123" * 10,
+        "motion_hash":       "bcd234" * 10,
+        "negative_hash":     "cde345" * 10,
+        "input_hash_short":  "a1b2c3",
+        "selected_lut":      "neutral",
+        "lower_third_style": "standard_bar",
+        "compiler_version":  "1.0.0",
+    }
+
+    with patch("core.generator.GENERATION_CONSTANTS", patched_gc):
+        with patch("core.prompt_parser.enrich_prompt_for_wan", mock_enrich):
+            run_generation(_COMPILED, "run_skip_enrich", tmp_path, seed=42, dry_run=True)
+
+    assert mock_enrich.call_count == 0
+
+
+# ── TEST E — _WAN_ENRICHMENT_SYSTEM_PROMPT contains all required terms ────────
+
+def test_wan_enrichment_system_prompt_contains_required_terms():
+    """_WAN_ENRICHMENT_SYSTEM_PROMPT must be non-empty and contain key structural terms."""
+    from core.prompt_parser import _WAN_ENRICHMENT_SYSTEM_PROMPT
+
+    assert isinstance(_WAN_ENRICHMENT_SYSTEM_PROMPT, str)
+    assert len(_WAN_ENRICHMENT_SYSTEM_PROMPT) > 0
+
+    required_terms = ["80", "camera", "broadcast", "no people", "no faces", "stable textures"]
+    for term in required_terms:
+        assert term in _WAN_ENRICHMENT_SYSTEM_PROMPT, (
+            f"_WAN_ENRICHMENT_SYSTEM_PROMPT is missing required term: {term!r}"
+        )

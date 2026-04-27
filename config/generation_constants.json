@@ -30,7 +30,7 @@
   "base_clip_duration_s": 6.04,
   "base_clip_frames_native": 145,
   "total_anchor_screen_time_s": 25,
-  "extensions_per_clip": 4,
+  "extensions_per_clip": 0,
   "total_loop_duration_s": 18.12,
   "playable_duration_s": 16.917,
   "crossfade_frames": 14,
@@ -93,7 +93,11 @@
   },
   "prototype_image_steps": 4,
   "prototype_image_guidance_scale": 0.0,
-  "prototype_output_resolution": [1280, 736],
+  "prototype_output_resolution": [
+    1280,
+    736
+  ],
   "prototype_duration_seconds": 5,
-  "verify_raw_only": true
+  "verify_raw_only": true,
+  "enrich_prompts": true
 }

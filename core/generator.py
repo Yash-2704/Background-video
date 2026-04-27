@@ -304,34 +304,35 @@ def generate_clip(
         _t1 = _time.time()
         print(f"[TIMING] pipe() total (denoise+VAE decode): {_t1-_t0:.1f}s", flush=True)
 
-        # ── STEP 4: Write frames to output_path via cv2.VideoWriter ──────────
-        # output.frames[0] is a list of PIL Images in RGB order.
+        # ── STEP 4: Write frames to output_path via imageio ──────────────────
+        # imageio-ffmpeg writes PIL RGB frames directly to
+        # H.264/yuv420p — no cv2 color conversion, no re-encode.
+        import imageio as _imageio
         frames = output.frames[0]
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(
+        _t2_start = _time.time()
+        writer = _imageio.get_writer(
             str(output_path),
-            fourcc,
-            float(GC["native_fps"]),                        # 24.0
-            (GC["generate_resolution"][0], GC["generate_resolution"][1]),  # (1280, 720)
+            fps=float(GC["native_fps"]),
+            codec="libx264",
+            pixelformat="yuv420p",
+            quality=None,
+            ffmpeg_params=["-crf", "18"],
         )
-        if not writer.isOpened():
-            raise RuntimeError(
-                f"cv2.VideoWriter failed to open for live output: {output_path}"
-            )
-
-        for pil_frame in frames:
-            frame_np  = np.array(pil_frame)                 # RGB uint8
-            frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
-            writer.write(frame_bgr)
-
-        writer.release()
+        try:
+            for pil_frame in frames:
+                writer.append_data(np.array(pil_frame))
+        finally:
+            writer.close()
         _t2 = _time.time()
-        print(f"[TIMING] Video write: {_t2-_t1:.1f}s | Clip total: {_t2-_t0:.1f}s", flush=True)
-
+        print(
+            f"[TIMING] Video write (H.264): {_t2-_t2_start:.1f}s"
+            f" | Clip total: {_t2-_t0:.1f}s",
+            flush=True,
+        )
         if not output_path.exists():
             raise RuntimeError(
-                f"generate_clip() live: output file was not created at {output_path}"
+                f"generate_clip() live: output file was not "
+                f"created at {output_path}"
             )
 
         # Explicitly free pipeline VRAM before returning so the next clip can
@@ -467,6 +468,7 @@ def crossfade_join(
         import subprocess
         import sys
         import tempfile
+        import time as _time
 
         GC         = GENERATION_CONSTANTS
         native_fps = GC["native_fps"]                      # 24
@@ -668,6 +670,28 @@ def crossfade_join(
                 str(output_path),
             )
 
+            # Re-encode concat output mp4v → H.264/yuv420p
+            _h264_tmp = output_path.parent / (output_path.stem + "_h264tmp.mp4")
+            _t_enc0 = _time.time()
+            try:
+                _ffmpeg(
+                    "-i", str(output_path),
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    "-crf", "18",
+                    str(_h264_tmp),
+                )
+                output_path.unlink()
+                _h264_tmp.rename(output_path)
+            except RuntimeError as _enc_err:
+                if _h264_tmp.exists():
+                    _h264_tmp.unlink()
+                raise RuntimeError(
+                    f"H.264 re-encode failed for crossfade output: {_enc_err}"
+                ) from _enc_err
+            _t_enc1 = _time.time()
+            print(f"[TIMING] H.264 re-encode (crossfade): {_t_enc1-_t_enc0:.1f}s", flush=True)
+
             total_frames_raw = fpc * 3   # 435
 
             return {
@@ -716,14 +740,38 @@ def run_generation(
     try:
         raw_dir.mkdir(parents=True, exist_ok=True)
 
-        clip_seeds = [seed, seed + 1, seed + 2]
-        clip_names = ["base_clip", "ext_1", "ext_2"]
+        # ── Prompt enrichment ─────────────────────────────────────────────────
+        # Expands the short compiled positive prompt to 80-120 words before
+        # passing it to the model. Only runs in live mode; dry_run always skips.
+        if not dry_run and GC.get("enrich_prompts", True):
+            from core.prompt_parser import enrich_prompt_for_wan
+            try:
+                prompt_to_use = enrich_prompt_for_wan(
+                    compiled["positive"],
+                    compiled["motion"],
+                )
+                print(f"[ENRICHED PROMPT] {prompt_to_use}", flush=True)
+            except Exception as _enrich_exc:
+                print(
+                    f"[WARN] Prompt enrichment failed: {_enrich_exc}. "
+                    "Using original prompt.",
+                    flush=True,
+                )
+                prompt_to_use = compiled["positive"]
+        else:
+            prompt_to_use = compiled["positive"]
+
         generation_modes_map = GC["generation_modes"]
-        generation_modes = [
-            generation_modes_map["base_clip"],      # "T2V"
-            generation_modes_map["extension_1"],    # "I2V"
-            generation_modes_map["extension_2"],    # "I2V"
-        ]
+        extensions = GC.get("extensions_per_clip", 0)
+        clip_names = ["base_clip"]
+        generation_modes = [generation_modes_map["base_clip"]]
+        if extensions >= 1 and "extension_1" in generation_modes_map:
+            clip_names.append("ext_1")
+            generation_modes.append(generation_modes_map["extension_1"])
+        if extensions >= 2 and "extension_2" in generation_modes_map:
+            clip_names.append("ext_2")
+            generation_modes.append(generation_modes_map["extension_2"])
+        clip_seeds = [seed + i for i in range(len(clip_names))]
 
         raw_clip_paths = []
         conditioning_frame = None  # None for T2V base clip
@@ -731,7 +779,7 @@ def run_generation(
         for idx, (clip_seed, clip_name) in enumerate(zip(clip_seeds, clip_names)):
             out_path = raw_dir / f"{clip_name}.mp4"
             generate_clip(
-                positive=compiled["positive"],
+                positive=prompt_to_use,
                 motion=compiled["motion"],
                 negative=compiled["negative"],
                 seed=clip_seed,
@@ -751,18 +799,28 @@ def run_generation(
 
         # ── Crossfade join ────────────────────────────────────────────────────
         raw_loop_path = raw_dir / f"bg_{run_id}_raw_loop.mp4"
-        join_result   = crossfade_join(
-            clip_paths=raw_clip_paths,
-            output_path=raw_loop_path,
-            dry_run=dry_run,
-        )
+        if len(raw_clip_paths) == 1:
+            shutil.copy2(str(raw_clip_paths[0]), str(raw_loop_path))
+            join_result = {
+                "raw_loop_path":        raw_loop_path,
+                "seam_frames_raw":      [],
+                "seam_frames_playable": [],
+                "total_frames_raw":     GC["base_clip_frames_native"],
+                "playable_frames":      GC["base_clip_frames_native"],
+            }
+        else:
+            join_result = crossfade_join(
+                clip_paths=raw_clip_paths,
+                output_path=raw_loop_path,
+                dry_run=dry_run,
+            )
 
         # ── Assemble return dict ──────────────────────────────────────────────
         generation_log = {
             "run_id":                    run_id,
             "seed":                      seed,
             "dry_run":                   dry_run,
-            "clips_generated":           3,
+            "clips_generated":           len(raw_clip_paths),
             "seeds_used":                clip_seeds,
             "generation_modes":          generation_modes,
             "native_fps":                GC["native_fps"],
@@ -775,6 +833,8 @@ def run_generation(
             "playable_frames":           join_result["playable_frames"],
             "compiled_input_hash_short": compiled["input_hash_short"],
             "compiler_version":          compiled["compiler_version"],
+            "positive_prompt":           compiled["positive"],
+            "enriched_positive_prompt":  prompt_to_use,
             "status":                    "complete",
         }
 

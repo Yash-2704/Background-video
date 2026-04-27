@@ -73,6 +73,37 @@ _SYSTEM_PROMPT_HASH: str = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdig
 print(f"[prompt_parser] system_prompt_hash={_SYSTEM_PROMPT_HASH}", flush=True)
 
 
+# ── Wan2.2 enrichment system prompt ──────────────────────────────────────────
+
+_WAN_ENRICHMENT_SYSTEM_PROMPT: str = (
+    "You are a prompt engineer for Wan2.2-TI2V-5B, a text-to-video diffusion model "
+    "used for broadcast background video production.\n\n"
+    "Your task: Expand a short editorial prompt into a structured 80-120 word prompt "
+    "that Wan2.2 can use to generate high-quality, coherent video output.\n\n"
+    "Required structure (write as continuous prose in this order):\n"
+    "1. Scene description — specific architecture, environment, or landscape with "
+    "concrete visual details\n"
+    "2. camera movement — one explicit movement such as: slow dolly forward, "
+    "static locked shot, gentle pan right, subtle crane up, slow push-in\n"
+    "3. Lighting — color, direction, intensity, and shadow quality\n"
+    "4. Visual style — cinematic depth of field, lens characteristics, photorealistic rendering\n"
+    "5. Color grade — specific tone, saturation, and contrast\n"
+    "6. Atmosphere — ambient conditions such as wind, haze, humidity, or stillness\n"
+    "7. Quality anchors — end with exactly: "
+    "\"stable textures, smooth motion, broadcast quality, no artifacts, no text, "
+    "no people, no faces\"\n\n"
+    "Hard rules:\n"
+    "- NEVER use these words: evokes, suggests, conveys, feels, emotional\n"
+    "- NO people, NO faces, NO hands, NO bodies, NO text overlays, NO logos, "
+    "NO news graphics\n"
+    "- This is a BACKGROUND video — all foreground must be empty space, architecture, "
+    "or nature\n"
+    "- Use only concrete visual and cinematographic language\n"
+    "- Return ONLY the expanded prompt. No preamble, no explanation, no quotation marks.\n"
+    "- Target length: 80-120 words"
+)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def parse_free_prompt(user_prompt: str) -> dict:
@@ -129,3 +160,39 @@ def parse_free_prompt(user_prompt: str) -> dict:
 
     result["inference_notes"] = parsed.get("inference_notes", "")
     return result
+
+
+def enrich_prompt_for_wan(positive_prompt: str, motion_prompt: str) -> str:
+    """
+    Expand a short compiled positive prompt into an 80-120 word Wan2.2-structured prompt.
+
+    Only the positive prompt is expanded; motion_prompt is passed as context only.
+    Raises on any Groq failure — the caller is responsible for catching and falling back.
+    """
+    if not _GROQ_API_KEY:
+        raise RuntimeError(
+            "GROQ_API_KEY environment variable is not set. "
+            "Add it to .env at the project root."
+        )
+
+    from groq import Groq  # guard-imported so module loads without groq on Mac
+
+    client = Groq(api_key=_GROQ_API_KEY)
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": _WAN_ENRICHMENT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Editorial prompt: {positive_prompt}\n"
+                    f"Motion intent: {motion_prompt}"
+                ),
+            },
+        ],
+        temperature=0.3,
+        max_tokens=300,
+    )
+
+    return response.choices[0].message.content.strip()

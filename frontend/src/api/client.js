@@ -1,4 +1,4 @@
-const API_BASE = 'http://100.92.126.27:8000'
+const API_BASE = 'http://100.92.126.27:8001'
 export async function parsePrompt(prompt) {
   let response
   try {
