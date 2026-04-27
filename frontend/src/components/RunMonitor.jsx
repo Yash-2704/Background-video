@@ -1,29 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { submitGeneration, getRunStatus } from '../api/client.js'
+import { submitGeneration, getRunStatus, getMediaUrl } from '../api/client.js'
 
 // 11 stages — no interpolation stage
 // (Wan2.2-TI2V-5B outputs 24fps natively)
 const PIPELINE_STAGES = [
   { key: 'prompt_compilation', label: 'Prompt Compilation' },
-  { key: 'generation',         label: 'Video Generation'   },
-  { key: 'probe_decode',       label: 'Decode Probe'       },
-  { key: 'probe_temporal',     label: 'Temporal Probe'     },
-  { key: 'gate_evaluation',    label: 'Quality Gates'      },
-  { key: 'upscale',            label: 'Upscale 1080p'      },
-  { key: 'mask_generation',    label: 'Mask Generation'    },
-  { key: 'lut_grading',        label: 'LUT Grading'        },
-  { key: 'composite',          label: 'Composite'          },
-  { key: 'preview_export',     label: 'Preview Export'     },
-  { key: 'metadata_assembly',  label: 'Metadata Assembly'  },
+  { key: 'generation', label: 'Video Generation' },
+  { key: 'probe_decode', label: 'Decode Probe' },
+  { key: 'probe_temporal', label: 'Temporal Probe', skipped: true },
+  { key: 'gate_evaluation', label: 'Quality Gates', skipped: true },
+  { key: 'upscale', label: 'Upscale 1080p', skipped: true },
+  { key: 'mask_generation', label: 'Mask Generation', skipped: true },
+  { key: 'lut_grading', label: 'LUT Grading', skipped: true },
+  { key: 'composite', label: 'Composite', skipped: true },
+  { key: 'preview_export', label: 'Preview Export', skipped: true },
+  { key: 'metadata_assembly', label: 'Metadata Assembly', skipped: true },
 ]
 
 const FIELD_LABELS = {
-  category:          'Category',
-  location_feel:     'Location Feel',
-  time_of_day:       'Time of Day',
+  category: 'Category',
+  location_feel: 'Location Feel',
+  time_of_day: 'Time of Day',
   color_temperature: 'Color Temperature',
-  mood:              'Mood',
-  motion_intensity:  'Motion Intensity',
+  mood: 'Mood',
+  motion_intensity: 'Motion Intensity',
 }
 
 const TERMINAL_STATUSES = new Set(['complete', 'failed', 'escalated'])
@@ -49,8 +49,8 @@ function parseStages(stagesData) {
 
 function StageIndicator({ status }) {
   if (status === 'complete') return <span className="stage-indicator stage-complete">✓</span>
-  if (status === 'failed')   return <span className="stage-indicator stage-failed">✕</span>
-  if (status === 'running')  return <span className="stage-indicator stage-running" />
+  if (status === 'failed') return <span className="stage-indicator stage-failed">✕</span>
+  if (status === 'running') return <span className="stage-indicator stage-running" />
   return <span className="stage-indicator stage-idle" />
 }
 
@@ -141,17 +141,17 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
   const isTerminal = TERMINAL_STATUSES.has(runStatus)
 
   function statusBannerClass() {
-    if (runStatus === 'complete')  return 'status-banner status-complete'
-    if (runStatus === 'failed')    return 'status-banner status-failed'
+    if (runStatus === 'complete') return 'status-banner status-complete'
+    if (runStatus === 'failed') return 'status-banner status-failed'
     if (runStatus === 'escalated') return 'status-banner status-escalated'
     return 'status-banner status-running'
   }
 
   function statusBannerText() {
-    if (runStatus === 'starting')  return 'Initializing run...'
-    if (runStatus === 'running')   return 'Pipeline running'
-    if (runStatus === 'complete')  return 'Run complete'
-    if (runStatus === 'failed')    return 'Run failed'
+    if (runStatus === 'starting') return 'Initializing run...'
+    if (runStatus === 'running') return 'Pipeline running'
+    if (runStatus === 'complete') return 'Run complete'
+    if (runStatus === 'failed') return 'Run failed'
     if (runStatus === 'escalated') return 'Escalated to human review'
     return ''
   }
@@ -200,7 +200,7 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
             >
               <StageIndicator status={status} />
               <span className={`stage-label${status === 'failed' ? ' stage-label--failed' : ''}`}>
-                {stage.label}
+                {stage.label}{stage.skipped ? <span style={{ color: '#888', fontSize: '0.8em', marginLeft: 6 }}>Skipped</span> : null}
               </span>
             </li>
           )
@@ -231,12 +231,31 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
             <span className="result-label">Gate Result</span>
             <span className="result-value">{runResult.gate_result?.overall}</span>
           </div>
-          <button
-            className="output-bundle-btn"
-            onClick={() => onComplete(runResult)}
-          >
-            View Output Bundle →
-          </button>
+          {runResult.gate_result?.overall === 'raw_verify' ? (
+            <div style={{ marginTop: '1rem' }}>
+              <h3 style={{ marginBottom: '0.5rem' }}>Raw Output Preview</h3>
+              <video
+                controls
+                loop
+                src={getMediaUrl(runResult.run_id, `bg_${runResult.run_id}_raw_loop.mp4`)}
+                style={{ width: '100%', maxWidth: '720px', display: 'block' }}
+              />
+              <div className="result-row" style={{ marginTop: '0.5rem' }}>
+                <span className="result-label">Seed</span>
+                <span className="result-value">{runResult.seed}</span>
+              </div>
+              <p style={{ marginTop: '0.5rem', fontStyle: 'italic', fontSize: '0.85em' }}>
+                Raw unprocessed output — no upscale, grade, or composite applied.
+              </p>
+            </div>
+          ) : (
+            <button
+              className="output-bundle-btn"
+              onClick={() => onComplete(runResult)}
+            >
+              View Output Bundle →
+            </button>
+          )}
         </div>
       )}
     </div>

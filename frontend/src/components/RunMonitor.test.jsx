@@ -11,6 +11,7 @@ vi.mock('../api/client', () => ({
   submitGeneration: vi.fn(),
   getRunStatus:     vi.fn(),
   compilePrompts:   vi.fn(),
+  getMediaUrl:      vi.fn((clip_id, filename) => `http://test-host/api/v1/media/${clip_id}/${filename}`),
 }))
 
 import { parsePrompt, submitGeneration, getRunStatus, compilePrompts } from '../api/client'
@@ -441,5 +442,50 @@ describe('EditorialForm App.jsx integration', () => {
     await waitFor(() =>
       expect(screen.getByRole('textbox')).toBeInTheDocument()
     )
+  })
+})
+
+// ── Raw verify mode ──────────────────────────────────────────────────────────
+
+describe('Raw verify mode', () => {
+  const mockRawVerifyResult = {
+    run_id:               'bg_001_b2e7f3',
+    status:               'complete',
+    raw_loop_path:        'raw/bg_001_b2e7f3_raw_loop.mp4',
+    seed:                 42819,
+    seam_frames_raw:      [183, 366],
+    seam_frames_playable: [138, 269],
+    stages: {
+      prompt_compilation: 'complete',
+      generation:         'complete',
+      probe_decode:       'complete',
+      probe_temporal:     'complete',
+      gate_evaluation:    'complete',
+      upscale:            'complete',
+      mask_generation:    'complete',
+      lut_grading:        'complete',
+      composite:          'complete',
+      preview_export:     'complete',
+      metadata_assembly:  'complete',
+    },
+    gate_result: { overall: 'raw_verify' },
+  }
+
+  it('D. video player appears when gate_result is raw_verify', async () => {
+    await renderAndPoll(mockRawVerifyResult)
+    expect(document.querySelector('video')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /view output bundle/i })).not.toBeInTheDocument()
+  })
+
+  it('E. video player absent in normal complete mode', async () => {
+    await renderAndPoll(mockRunResult)
+    expect(document.querySelector('video')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /view output bundle/i })).toBeInTheDocument()
+  })
+
+  it('F. raw verify player shows seed value', async () => {
+    await renderAndPoll(mockRawVerifyResult)
+    const allMatches = screen.getAllByText('42819')
+    expect(allMatches.length).toBeGreaterThan(0)
   })
 })

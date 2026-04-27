@@ -158,3 +158,22 @@ def test_10_existing_bundle_endpoint_still_works(fake_bundle):
     with patch.object(bundle_module, '_PROJECT_ROOT', fake_bundle["_project_root"]):
         response = client.get(f"/api/v1/bundle/{clip_id}/{filename}")
     assert response.status_code == 200
+
+
+def test_11_raw_loop_file_found_in_raw_subdirectory(tmp_path):
+    """GET /media/{clip_id}/bg_{clip_id}_raw_loop.mp4 returns 200 when the file
+    lives in output/{clip_id}/raw/ (not output/{clip_id}/final/)."""
+    clip_id = "bg_raw_test_xyz"
+    raw_dir = tmp_path / "output" / clip_id / "raw"
+    raw_dir.mkdir(parents=True)
+    raw_file = raw_dir / f"bg_{clip_id}_raw_loop.mp4"
+    raw_file.write_bytes(
+        b'\x00\x00\x00\x20ftypisom'
+        b'\x00\x00\x00\x00isomiso2'
+        b'avc1mp41'
+    )
+
+    filename = f"bg_{clip_id}_raw_loop.mp4"
+    with patch.object(bundle_module, '_PROJECT_ROOT', tmp_path):
+        response = client.get(f"/api/v1/media/{clip_id}/{filename}")
+    assert response.status_code == 200

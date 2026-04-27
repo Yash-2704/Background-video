@@ -132,11 +132,12 @@ def clear_registry():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _patch_pipeline(gen_result, post_result, meta_result):
-    """Return a list of active patches for the three heavy-side-effect mocks."""
-    p1 = patch("core.orchestrator.run_generation",       return_value=gen_result)
-    p2 = patch("core.orchestrator.run_post_processing",  return_value=post_result)
+    """Return patches for the three heavy-side-effect mocks plus verify_raw_only=False."""
+    p1 = patch("core.orchestrator.run_generation",        return_value=gen_result)
+    p2 = patch("core.orchestrator.run_post_processing",   return_value=post_result)
     p3 = patch("core.orchestrator.run_metadata_assembly", return_value=meta_result)
-    return p1, p2, p3
+    p4 = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
+    return p1, p2, p3, p4
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -200,8 +201,8 @@ def test_07_run_pipeline_returns_all_required_keys(
     from core.orchestrator import _init_run_state, run_pipeline
     run_id = "test_success_07"
     _init_run_state(run_id)
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1, p2, p3, p4:
         result = run_pipeline(run_id, canonical_user_input)
 
     required_keys = [
@@ -220,8 +221,8 @@ def test_08_run_pipeline_success_status_complete(
     from core.orchestrator import _init_run_state, run_pipeline
     run_id = "test_success_08"
     _init_run_state(run_id)
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1, p2, p3, p4:
         result = run_pipeline(run_id, canonical_user_input)
     assert result["status"] == "complete"
 
@@ -232,8 +233,8 @@ def test_09_registry_status_complete_after_successful_run(
     from core.orchestrator import RUN_REGISTRY, _init_run_state, run_pipeline
     run_id = "test_success_09"
     _init_run_state(run_id)
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
     assert RUN_REGISTRY[run_id]["status"] == "complete"
 
@@ -244,8 +245,8 @@ def test_10_all_11_stages_complete_after_success(
     from core.orchestrator import RUN_REGISTRY, STAGE_KEYS, _init_run_state, run_pipeline
     run_id = "test_success_10"
     _init_run_state(run_id)
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
     for key in STAGE_KEYS:
         assert RUN_REGISTRY[run_id]["stages"][key] == "complete", (
@@ -259,8 +260,8 @@ def test_11_result_stages_matches_registry_stages(
     from core.orchestrator import RUN_REGISTRY, _init_run_state, run_pipeline
     run_id = "test_success_11"
     _init_run_state(run_id)
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1, p2, p3, p4:
         result = run_pipeline(run_id, canonical_user_input)
     assert result["stages"] == RUN_REGISTRY[run_id]["stages"]
 
@@ -271,8 +272,8 @@ def test_12_run_generation_called_exactly_once_on_clean_run(
     from core.orchestrator import _init_run_state, run_pipeline
     run_id = "test_success_12"
     _init_run_state(run_id)
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1 as mock_gen, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1 as mock_gen, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
     mock_gen.assert_called_once()
 
@@ -302,8 +303,9 @@ def test_13_prompt_compilation_complete_before_generation_runs(
     p2 = patch("core.orchestrator.run_post_processing",   return_value=mock_post_result)
     p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
     p1 = patch("core.orchestrator.run_generation", side_effect=_capturing_gen)
+    p4 = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
 
-    with p1, p2, p3:
+    with p1, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
 
     assert prompt_comp_status_when_gen_called, "Generation was never called"
@@ -481,8 +483,9 @@ def test_18_post_processing_failure_sets_stage_failed_and_raises(
     p1 = patch("core.orchestrator.run_generation",        return_value=mock_gen_result)
     p2 = patch("core.orchestrator.run_post_processing",   side_effect=RuntimeError("upscale boom"))
     p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
+    p4 = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
 
-    with pytest.raises(RuntimeError), p1, p2, p3:
+    with pytest.raises(RuntimeError), p1, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
 
 
@@ -497,8 +500,9 @@ def test_19_registry_status_failed_after_stage_failure(
     p1 = patch("core.orchestrator.run_generation",        return_value=mock_gen_result)
     p2 = patch("core.orchestrator.run_post_processing",   side_effect=RuntimeError("boom"))
     p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
+    p4 = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
 
-    with pytest.raises(RuntimeError), p1, p2, p3:
+    with pytest.raises(RuntimeError), p1, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
 
     assert RUN_REGISTRY[run_id]["status"] == "failed"
@@ -515,8 +519,9 @@ def test_20_runtime_error_message_contains_stage_name(
     p1 = patch("core.orchestrator.run_generation",        return_value=mock_gen_result)
     p2 = patch("core.orchestrator.run_post_processing",   side_effect=RuntimeError("boom"))
     p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
+    p4 = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
 
-    with pytest.raises(RuntimeError) as exc_info, p1, p2, p3:
+    with pytest.raises(RuntimeError) as exc_info, p1, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
 
     # The error message contains the name of the failing stage
@@ -534,8 +539,8 @@ def test_21_result_stored_in_registry_after_complete_run(
 
     run_id = "test_registry_21"
     _init_run_state(run_id)
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1, p2, p3, p4:
         run_pipeline(run_id, canonical_user_input)
     assert RUN_REGISTRY[run_id]["result"] is not None
 
@@ -551,8 +556,8 @@ def test_22_two_run_ids_produce_independent_registry_entries(
     _init_run_state(run_id_a)
     _init_run_state(run_id_b)
 
-    p1, p2, p3 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patch_pipeline(mock_gen_result, mock_post_result, mock_metadata_result)
+    with p1, p2, p3, p4:
         run_pipeline(run_id_a, canonical_user_input)
         run_pipeline(run_id_b, canonical_user_input)
 
@@ -573,8 +578,9 @@ def client(mock_gen_result, mock_post_result, mock_metadata_result):
     p1 = patch("core.orchestrator.run_generation",        return_value=mock_gen_result)
     p2 = patch("core.orchestrator.run_post_processing",   return_value=mock_post_result)
     p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
+    p4 = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
 
-    with p1, p2, p3:
+    with p1, p2, p3, p4:
         with TestClient(app) as tc:
             yield tc
 
@@ -668,8 +674,9 @@ def test_30_run_id_appears_in_registry_after_post_generate(
     p1 = patch("core.orchestrator.run_generation",        return_value=mock_gen_result)
     p2 = patch("core.orchestrator.run_post_processing",   return_value=mock_post_result)
     p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
+    p4 = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
 
-    with p1, p2, p3:
+    with p1, p2, p3, p4:
         with TestClient(app) as tc:
             resp = tc.post("/api/v1/generate", json=VALID_PAYLOAD)
 
@@ -716,3 +723,51 @@ def test_32_all_210_existing_backend_tests_still_importable():
     for mod in existing_modules:
         imported = importlib.import_module(mod)
         assert imported is not None, f"Failed to import {mod}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTS 33–34: verify_raw_only flag
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_33_verify_raw_only_exits_after_probe_decode(
+    canonical_user_input, mock_gen_result, mock_post_result, mock_metadata_result
+):
+    """When verify_raw_only=True, run_post_processing is never called and
+    the result carries gate_result.overall == 'raw_verify' with metadata_path == ''."""
+    from core.orchestrator import _init_run_state, run_pipeline
+
+    run_id = "test_raw_only_33"
+    _init_run_state(run_id)
+
+    p1 = patch("core.orchestrator.run_generation",        return_value=mock_gen_result)
+    p2 = patch("core.orchestrator.run_post_processing",   return_value=mock_post_result)
+    p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
+    p_gc = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": True})
+
+    with p1, p2 as mock_post, p3, p_gc:
+        result = run_pipeline(run_id, canonical_user_input)
+
+    mock_post.assert_not_called()
+    assert result["gate_result"]["overall"] == "raw_verify"
+    assert result["metadata_path"] == ""
+
+
+def test_34_verify_raw_only_false_runs_full_pipeline(
+    canonical_user_input, mock_gen_result, mock_post_result, mock_metadata_result
+):
+    """When verify_raw_only=False the pipeline continues and run_post_processing
+    is called exactly once."""
+    from core.orchestrator import _init_run_state, run_pipeline
+
+    run_id = "test_raw_only_34"
+    _init_run_state(run_id)
+
+    p1 = patch("core.orchestrator.run_generation",        return_value=mock_gen_result)
+    p2 = patch("core.orchestrator.run_post_processing",   return_value=mock_post_result)
+    p3 = patch("core.orchestrator.run_metadata_assembly", return_value=mock_metadata_result)
+    p_gc = patch.dict("core.orchestrator.GENERATION_CONSTANTS", {"verify_raw_only": False})
+
+    with p1, p2 as mock_post, p3, p_gc:
+        run_pipeline(run_id, canonical_user_input)
+
+    mock_post.assert_called_once()

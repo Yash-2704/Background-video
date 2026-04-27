@@ -164,6 +164,30 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
 
         _set_stage(run_id, "probe_decode", "complete")
 
+        # ── Raw-only early exit ───────────────────────────────────────────────
+        if GENERATION_CONSTANTS.get("verify_raw_only", False):
+            for _stage in ["generation", "probe_temporal", "gate_evaluation",
+                           "upscale", "mask_generation", "lut_grading",
+                           "composite", "preview_export", "metadata_assembly"]:
+                _set_stage(run_id, _stage, "complete")
+            result = {
+                "run_id":               run_id,
+                "status":               "complete",
+                "raw_loop_path":        gen_result["raw_loop_path"],
+                "seed":                 gen_result["seed"],
+                "seam_frames_raw":      gen_result["seam_frames_raw"],
+                "seam_frames_playable": gen_result["seam_frames_playable"],
+                "gate_result":          {"overall": "raw_verify", "failures": [],
+                                         "human_flags": [], "gates_checked": 0},
+                "selected_lut":         compiled["selected_lut"],
+                "lower_third_style":    compiled["lower_third_style"],
+                "metadata_path":        "",
+                "stages":               RUN_REGISTRY[run_id]["stages"],
+            }
+            RUN_REGISTRY[run_id]["status"] = "complete"
+            RUN_REGISTRY[run_id]["result"] = result
+            return result
+
         # ── Probe: temporal — SKIPPED ─────────────────────────────────────────
         # Temporal probe (Farneback optical flow × 434 frames) takes ~3 min
         # and only feeds the gate evaluator. With regen disabled (MAX_RETRIES=0),

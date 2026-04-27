@@ -133,8 +133,9 @@ def serve_bundle_file(clip_id: str, filename: str) -> FileResponse:
 def _allowed_media_filenames(clip_id: str) -> dict:
     """Return mapping of permitted media filenames → media_type."""
     return {
-        f"{clip_id}.mp4":          "video/mp4",
-        f"{clip_id}_preview.gif":  "image/gif",
+        f"{clip_id}.mp4":              "video/mp4",
+        f"{clip_id}_preview.gif":      "image/gif",
+        f"bg_{clip_id}_raw_loop.mp4":  "video/mp4",
     }
 
 
@@ -160,6 +161,8 @@ def serve_media_file(clip_id: str, filename: str):
         raise HTTPException(status_code=400, detail="Filename not permitted")
 
     file_path = _PROJECT_ROOT / "output" / clip_id / "final" / filename
+    if not file_path.exists():
+        file_path = _PROJECT_ROOT / "output" / clip_id / "raw" / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 

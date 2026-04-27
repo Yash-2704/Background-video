@@ -94,5 +94,6 @@
   "prototype_image_steps": 4,
   "prototype_image_guidance_scale": 0.0,
   "prototype_output_resolution": [1280, 736],
-  "prototype_duration_seconds": 5
+  "prototype_duration_seconds": 5,
+  "verify_raw_only": true
 }
