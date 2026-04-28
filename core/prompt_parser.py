@@ -104,6 +104,30 @@ _WAN_ENRICHMENT_SYSTEM_PROMPT: str = (
 )
 
 
+# ── Wan2.2 I2V enrichment system prompt ──────────────────────────────────────
+
+_WAN_I2V_ENRICHMENT_SYSTEM_PROMPT: str = (
+    "You are a motion prompt engineer for Wan2.2-TI2V-5B, an image-to-video diffusion model "
+    "used for broadcast background video production.\n\n"
+    "Your task: Expand a short animation description into a focused 60-80 word motion prompt. "
+    "The scene is already defined by the input image — do NOT describe it.\n\n"
+    "Focus ONLY on motion language:\n"
+    "- Element movement speeds (e.g. 'clouds drift left at 0.2x speed')\n"
+    "- Camera behaviour (e.g. 'static locked shot', 'subtle parallax drift of 3px')\n"
+    "- Light behaviour (e.g. 'sunlight pulses with 4-second interval', "
+    "'shadows lengthen slowly')\n"
+    "- Temporal rhythm — favour loop-friendly patterns with even, repeating cycles\n\n"
+    "Use concrete, measurable motion language. Avoid abstract adjectives.\n"
+    "End with exactly: "
+    "\"smooth looping motion, broadcast quality, no cuts, no people, no text appearing\"\n\n"
+    "Hard rules:\n"
+    "- NEVER describe the scene, environment, colours, or objects — only HOW things move\n"
+    "- NO people, NO faces, NO text overlays\n"
+    "- Return ONLY the motion prompt. No preamble, no explanation.\n"
+    "- Target length: 60-80 words"
+)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def parse_free_prompt(user_prompt: str) -> dict:
@@ -196,3 +220,142 @@ def enrich_prompt_for_wan(positive_prompt: str, motion_prompt: str) -> str:
     )
 
     return response.choices[0].message.content.strip()
+
+
+def enrich_prompt_for_i2v(animation_prompt: str) -> str:
+    """
+    Expand a short animation description into a 60-80 word motion-only prompt for Wan2.2 I2V.
+
+    Focuses exclusively on motion language — camera, element, and light behaviour.
+    Raises on any Groq failure — the caller is responsible for catching and falling back.
+    """
+    if not _GROQ_API_KEY:
+        raise RuntimeError(
+            "GROQ_API_KEY environment variable is not set. "
+            "Add it to .env at the project root."
+        )
+
+    from groq import Groq  # guard-imported so module loads without groq on Mac
+
+    client = Groq(api_key=_GROQ_API_KEY)
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": _WAN_I2V_ENRICHMENT_SYSTEM_PROMPT},
+            {"role": "user",   "content": animation_prompt},
+        ],
+        temperature=0.4,
+        max_tokens=256,
+    )
+
+    return response.choices[0].message.content.strip()
+
+
+# ── Wan2.2 T2V direct-compile system prompt ───────────────────────────────────
+
+_WAN_T2V_COMPILE_SYSTEM_PROMPT: str = (
+    "You are a prompt engineer for Wan2.2-TI2V-5B, a text-to-video diffusion model "
+    "used for broadcast background video production.\n\n"
+    "Your task: Rewrite the user's prompt into a structured Wan2.2-optimised video prompt "
+    "and extract metadata. Return ONLY valid JSON with no markdown, no preamble.\n\n"
+    "Output schema (return this exact structure):\n"
+    "{\n"
+    '  "positive_prompt": "80-120 word Wan2.2-optimised prompt",\n'
+    '  "motion_prompt": "one sentence describing camera/scene motion only",\n'
+    '  "color_temperature": "Cool | Neutral | Warm",\n'
+    '  "mood": "Serious | Tense | Neutral | Calm | Uplifting",\n'
+    '  "inference_notes": "brief 1-2 sentence explanation of choices"\n'
+    "}\n\n"
+    "positive_prompt structure (write as continuous prose in this order):\n"
+    "1. Scene — specific architecture, environment, or landscape with concrete visual details\n"
+    "2. Camera — explicitly state one of: camera locked static, slow dolly forward, "
+    "gentle pan right, subtle crane up, slow push-in\n"
+    "3. Lighting — colour, direction, intensity, shadow quality\n"
+    "4. Visual style — cinematic depth of field, lens characteristics, photorealistic rendering\n"
+    "5. Colour grade — specific tone, saturation, contrast\n"
+    "6. Atmosphere — ambient conditions such as wind, haze, humidity, stillness\n"
+    "7. Quality anchors — end with exactly: "
+    "\"stable textures, smooth motion, broadcast quality, no artifacts, no text, "
+    "no people, no faces\"\n\n"
+    "Hard rules:\n"
+    "- NEVER use: evokes, suggests, conveys, feels, emotional\n"
+    "- NO people, NO faces, NO hands, NO bodies, NO text overlays, NO logos, "
+    "NO news graphics\n"
+    "- This is a BACKGROUND video — all foreground must be empty space, "
+    "architecture, or nature\n"
+    "- motion_prompt: one sentence only, camera/scene motion language, no scene description\n"
+    "- color_temperature must be exactly one of: Cool, Neutral, Warm\n"
+    "- mood must be exactly one of: Serious, Tense, Neutral, Calm, Uplifting\n"
+    "- Return ONLY valid JSON. No markdown fences, no explanation outside the JSON."
+)
+
+_VALID_COLOR_TEMPERATURES = {"Cool", "Neutral", "Warm"}
+_VALID_MOODS = {"Serious", "Tense", "Neutral", "Calm", "Uplifting"}
+
+_COMPILE_DEFAULTS: dict = {
+    "positive_prompt":   "Wide architectural establishing shot, camera locked static, "
+                         "neutral daylight, cinematic depth of field, balanced tones, "
+                         "still atmosphere, stable textures, smooth motion, broadcast quality, "
+                         "no artifacts, no text, no people, no faces",
+    "motion_prompt":     "Camera locked static, no movement, imperceptible drift only.",
+    "color_temperature": "Neutral",
+    "mood":              "Neutral",
+    "inference_notes":   "",
+}
+
+
+def compile_prompt_from_text(raw_prompt: str) -> dict:
+    """
+    Rewrite a free-text user prompt directly into a Wan2.2-optimised compiled dict.
+
+    Makes a single Groq call. Returns dict with keys:
+    positive_prompt, motion_prompt, color_temperature, mood, inference_notes.
+    Never raises on bad LLM output — falls back to _COMPILE_DEFAULTS.
+    """
+    if not _GROQ_API_KEY:
+        raise RuntimeError(
+            "GROQ_API_KEY environment variable is not set. "
+            "Add it to .env at the project root."
+        )
+
+    from groq import Groq  # guard-imported so module loads without groq on Mac
+
+    client = Groq(api_key=_GROQ_API_KEY)
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": _WAN_T2V_COMPILE_SYSTEM_PROMPT},
+            {"role": "user",   "content": raw_prompt},
+        ],
+        temperature=0.2,
+        max_tokens=512,
+    )
+
+    raw: str = response.choices[0].message.content
+    text = raw.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    text = text.strip()
+
+    try:
+        parsed: dict = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return dict(_COMPILE_DEFAULTS)
+
+    color_temperature = parsed.get("color_temperature", "")
+    if color_temperature not in _VALID_COLOR_TEMPERATURES:
+        color_temperature = _COMPILE_DEFAULTS["color_temperature"]
+
+    mood = parsed.get("mood", "")
+    if mood not in _VALID_MOODS:
+        mood = _COMPILE_DEFAULTS["mood"]
+
+    return {
+        "positive_prompt":   parsed.get("positive_prompt", "") or _COMPILE_DEFAULTS["positive_prompt"],
+        "motion_prompt":     parsed.get("motion_prompt", "")   or _COMPILE_DEFAULTS["motion_prompt"],
+        "color_temperature": color_temperature,
+        "mood":              mood,
+        "inference_notes":   parsed.get("inference_notes", ""),
+    }

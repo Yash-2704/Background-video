@@ -80,6 +80,7 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
     }
 
     async function startRun() {
+      setError(null)
       try {
         const response = await submitGeneration({
           run_id: compileResult.input_hash_short,
@@ -167,12 +168,29 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
 
       {/* Run summary strip */}
       <div className="run-summary-strip">
-        {Object.entries(FIELD_LABELS).map(([key, label]) => (
-          <div key={key} className="summary-item">
-            <span className="summary-label">{label}:</span>
-            <span className="summary-value">{formData?.[key] ?? '—'}</span>
+        {compileResult?.mode === 'i2v' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}>
+            <img
+              src={getMediaUrl(compileResult.image_id, `${compileResult.image_id}.jpg`)}
+              alt="Source"
+              style={{ height: 60, borderRadius: 4, objectFit: 'cover' }}
+              onError={(e) => { e.target.style.display = 'none' }}
+            />
+            <div>
+              <span className="summary-label">Animation:</span>
+              <span className="summary-value" style={{ marginLeft: 6 }}>
+                {formData?.animation_prompt ?? '—'}
+              </span>
+            </div>
           </div>
-        ))}
+        ) : (
+          Object.entries(FIELD_LABELS).map(([key, label]) => (
+            <div key={key} className="summary-item">
+              <span className="summary-label">{label}:</span>
+              <span className="summary-value">{formData?.[key] ?? '—'}</span>
+            </div>
+          ))
+        )}
       </div>
 
       {/* Overall status banner */}

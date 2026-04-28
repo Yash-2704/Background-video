@@ -445,6 +445,38 @@ describe('EditorialForm App.jsx integration', () => {
   })
 })
 
+// ── I2V / T2V summary strip ──────────────────────────────────────────────────
+
+describe('Summary strip mode switching', () => {
+  it('A. T2V mode (no mode field) shows editorial field labels', async () => {
+    renderMonitor()
+    expect(screen.getByText('Category:')).toBeInTheDocument()
+    await waitFor(() => expect(submitGeneration).toHaveBeenCalled())
+  })
+
+  it('B. I2V mode shows Animation label and prompt text, hides Category', async () => {
+    renderMonitor({
+      compileResult: { ...mockCompileResult, mode: 'i2v', image_id: 'test123' },
+      formData: { animation_prompt: 'light streaks moving left' },
+    })
+    expect(screen.getByText('Animation:')).toBeInTheDocument()
+    expect(screen.getByText('light streaks moving left')).toBeInTheDocument()
+    expect(screen.queryByText('Category:')).not.toBeInTheDocument()
+    await waitFor(() => expect(submitGeneration).toHaveBeenCalled())
+  })
+
+  it('C. I2V mode renders img with src containing image_id', async () => {
+    renderMonitor({
+      compileResult: { ...mockCompileResult, mode: 'i2v', image_id: 'test123' },
+      formData: { animation_prompt: 'light streaks moving left' },
+    })
+    const img = document.querySelector('img[alt="Source"]')
+    expect(img).toBeInTheDocument()
+    expect(img.src).toContain('test123')
+    await waitFor(() => expect(submitGeneration).toHaveBeenCalled())
+  })
+})
+
 // ── Raw verify mode ──────────────────────────────────────────────────────────
 
 describe('Raw verify mode', () => {

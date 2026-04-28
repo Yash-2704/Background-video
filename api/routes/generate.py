@@ -90,7 +90,8 @@ async def generate_route(
     # The orchestrator stores the full result in RUN_REGISTRY on completion.
     async def _run_and_store():
         try:
-            await asyncio.to_thread(run_pipeline, request.run_id, compiled["user_input"])
+            _user_input = compiled if compiled.get("mode") == "i2v" else compiled["user_input"]
+            await asyncio.to_thread(run_pipeline, request.run_id, _user_input)
         except Exception as exc:
             import traceback
             print(f"\n[PIPELINE ERROR] {exc}", flush=True)

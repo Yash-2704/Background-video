@@ -89,6 +89,31 @@ def _extract_last_frame(video_path: Path) -> np.ndarray:
     return last_frame
 
 
+# ── _letterbox_resize() ───────────────────────────────────────────────────────
+
+def _letterbox_resize(
+    img: "PIL.Image.Image",
+    target_w: int,
+    target_h: int,
+) -> "PIL.Image.Image":
+    """
+    Scale img to fit within (target_w, target_h) preserving aspect ratio,
+    then centre it on a black canvas of exactly (target_w, target_h).
+    Returns an RGB PIL Image.
+    """
+    from PIL import Image as _PIL
+    src_w, src_h = img.size
+    scale = min(target_w / src_w, target_h / src_h)
+    new_w = int(src_w * scale)
+    new_h = int(src_h * scale)
+    img = img.resize((new_w, new_h), _PIL.LANCZOS)
+    canvas = _PIL.new("RGB", (target_w, target_h), (0, 0, 0))
+    offset_x = (target_w - new_w) // 2
+    offset_y = (target_h - new_h) // 2
+    canvas.paste(img, (offset_x, offset_y))
+    return canvas
+
+
 # ── generate_clip() ────────────────────────────────────────────────────────────
 
 def generate_clip(
@@ -138,7 +163,14 @@ def generate_clip(
             # ── I2V pathway (extension clip) ──────────────────────────────────
             # DRY-RUN STUB: derive base color from mean BGR of conditioning_frame,
             # then apply a slight hue shift to simulate visual continuity.
-            mean_bgr = np.mean(conditioning_frame.reshape(-1, 3), axis=0)  # shape (3,)
+            # conditioning_frame may be a PIL RGB Image (animate I2V) or a BGR
+            # numpy array (_extract_last_frame). Normalise to numpy BGR first.
+            from PIL import Image as _PILCheck
+            if isinstance(conditioning_frame, _PILCheck.Image):
+                _frame_arr = np.array(conditioning_frame)[:, :, ::-1]  # RGB PIL → BGR numpy
+            else:
+                _frame_arr = conditioning_frame
+            mean_bgr = np.mean(_frame_arr.reshape(-1, 3), axis=0)  # shape (3,)
             shift    = np.array([5, 3, -3], dtype=np.float32)
             shifted  = np.clip(mean_bgr + shift, 0, 255)
             color    = tuple(int(v) for v in shifted)
@@ -283,10 +315,14 @@ def generate_clip(
             )
         else:
             # I2V: image conditioning.
-            # conditioning_frame arrives in BGR format (cv2 convention) —
-            # convert to RGB PIL Image before passing to the pipeline.
-            frame_rgb = cv2.cvtColor(conditioning_frame, cv2.COLOR_BGR2RGB)
-            pil_image = PIL.Image.fromarray(frame_rgb)
+            # conditioning_frame may be a PIL RGB Image (animate I2V path) or a
+            # BGR numpy array from _extract_last_frame() (extension clip path).
+            from PIL import Image as _PILCheck
+            if isinstance(conditioning_frame, _PILCheck.Image):
+                pil_image = conditioning_frame
+            else:
+                frame_rgb = cv2.cvtColor(conditioning_frame, cv2.COLOR_BGR2RGB)
+                pil_image = PIL.Image.fromarray(frame_rgb)
 
             output = pipe(
                 image=pil_image,
@@ -740,26 +776,65 @@ def run_generation(
     try:
         raw_dir.mkdir(parents=True, exist_ok=True)
 
-        # ── Prompt enrichment ─────────────────────────────────────────────────
-        # Expands the short compiled positive prompt to 80-120 words before
-        # passing it to the model. Only runs in live mode; dry_run always skips.
-        if not dry_run and GC.get("enrich_prompts", True):
-            from core.prompt_parser import enrich_prompt_for_wan
+        # ── I2V mode — single uploaded-image-to-video clip ────────────────────
+        if compiled.get("mode") == "i2v":
+            image_id = compiled.get("image_id")
+            if not image_id:
+                raise ValueError("I2V mode requires image_id in compiled dict")
+
+            upload_path = output_dir / "uploads" / f"{image_id}.jpg"
+            if not upload_path.exists():
+                raise FileNotFoundError(
+                    f"Uploaded image not found: {upload_path}"
+                )
+
+            from PIL import Image as _PILImage
+            pil_image = _PILImage.open(upload_path).convert("RGB")
+
+            target_w = GC["generate_resolution"][0]   # 1280
+            target_h = GC["generate_resolution"][1]   # 736
+            pil_image = _letterbox_resize(pil_image, target_w, target_h)
+
+            out_path = raw_dir / "base_clip.mp4"
+            generate_clip(
+                positive=compiled.get("positive", ""),
+                motion=compiled.get("motion", ""),
+                negative=compiled.get("negative", ""),
+                seed=seed,
+                clip_index=1,
+                output_path=out_path,
+                dry_run=dry_run,
+                conditioning_frame=pil_image,
+            )
+
+            raw_loop_path = raw_dir / f"bg_{run_id}_raw_loop.mp4"
+            shutil.copy2(str(out_path), str(raw_loop_path))
+
             try:
-                prompt_to_use = enrich_prompt_for_wan(
-                    compiled["positive"],
-                    compiled["motion"],
-                )
-                print(f"[ENRICHED PROMPT] {prompt_to_use}", flush=True)
-            except Exception as _enrich_exc:
-                print(
-                    f"[WARN] Prompt enrichment failed: {_enrich_exc}. "
-                    "Using original prompt.",
-                    flush=True,
-                )
-                prompt_to_use = compiled["positive"]
-        else:
-            prompt_to_use = compiled["positive"]
+                upload_path.unlink()
+            except Exception:
+                pass
+
+            generation_log = {
+                "run_id":          run_id,
+                "seed":            seed,
+                "mode":            "i2v",
+                "image_id":        image_id,
+                "clips_generated": 1,
+                "native_fps":      GC["native_fps"],
+                "positive_prompt": compiled.get("positive", ""),
+            }
+
+            return {
+                "raw_loop_path":        str(raw_loop_path),
+                "seed":                 seed,
+                "seam_frames_raw":      [],
+                "seam_frames_playable": [],
+                "generation_log":       generation_log,
+            }
+
+        prompt_to_use = compiled["positive"]
+        print(f"[COMPILED PROMPT] {prompt_to_use}", flush=True)
 
         generation_modes_map = GC["generation_modes"]
         extensions = GC.get("extensions_per_clip", 0)

@@ -45,7 +45,7 @@ class CompileResponse(BaseModel):
     selected_lut:      str
     lower_third_style: str
     compiler_version:  str
-    user_input:        EditorialInput
+    user_input:        dict
 
 
 class PipelineStage(BaseModel):
@@ -154,6 +154,10 @@ class ValidInputsResponse(BaseModel):
     motion_intensity:  list[str]
 
 
+class CompileRequest(BaseModel):
+    prompt: str
+
+
 class ParseRequest(BaseModel):
     prompt: str
 
@@ -167,3 +171,11 @@ class ParseResponse(BaseModel):
     motion_intensity:  str
     original_prompt:   str
     inference_notes:   str = ""
+
+
+class UploadResponse(BaseModel):
+    image_id:          str
+    preview_url:       str
+    width:             int
+    height:            int
+    original_filename: str

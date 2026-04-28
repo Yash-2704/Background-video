@@ -136,6 +136,7 @@ def _allowed_media_filenames(clip_id: str) -> dict:
         f"{clip_id}.mp4":              "video/mp4",
         f"{clip_id}_preview.gif":      "image/gif",
         f"bg_{clip_id}_raw_loop.mp4":  "video/mp4",
+        f"{clip_id}.jpg":              "image/jpeg",
     }
 
 
@@ -163,6 +164,8 @@ def serve_media_file(clip_id: str, filename: str):
     file_path = _PROJECT_ROOT / "output" / clip_id / "final" / filename
     if not file_path.exists():
         file_path = _PROJECT_ROOT / "output" / clip_id / "raw" / filename
+    if not file_path.exists():
+        file_path = _PROJECT_ROOT / "output" / "uploads" / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 

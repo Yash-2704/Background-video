@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from api.models import HealthResponse, ValidInputsResponse
-from api.routes import bundle, compile, generate, parse, prototype, status
+from api.routes import bundle, compile, generate, parse, prototype, status, upload
 from core.prompt_compiler import get_all_valid_inputs
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -26,6 +26,9 @@ _GEN_CONSTANTS = json.loads(
     (_PROJECT_ROOT / "config" / "generation_constants.json").read_text(encoding="utf-8")
 )
 COMPILER_VERSION = "1.0.0"
+
+_UPLOADS_DIR = _PROJECT_ROOT / "output" / "uploads"
+_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -53,6 +56,7 @@ app.include_router(parse.router, prefix=_PREFIX)
 app.include_router(generate.router, prefix=_PREFIX)
 app.include_router(status.router, prefix=_PREFIX)
 app.include_router(bundle.router, prefix=_PREFIX)
+app.include_router(upload.router, prefix=_PREFIX)
 app.include_router(prototype.router, prefix=f"{_PREFIX}/prototype")
 
 

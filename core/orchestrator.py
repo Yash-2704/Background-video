@@ -20,6 +20,7 @@ Storage:
   survives process restarts and scales across workers.
 """
 
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -59,13 +60,39 @@ STAGE_KEYS = [
 # torch and diffusers are NEVER imported here — they live inside generator.py
 # behind the dry_run guard. Importing this module on a machine with no ML
 # packages installed must always succeed.
-from core.prompt_compiler import compile_prompts          # noqa: E402
+from core.prompt_compiler import compile_prompts, FIXED_NEGATIVE_PROMPT  # noqa: E402
+from core.prompt_parser   import compile_prompt_from_text  # noqa: E402
 from core.generator       import run_generation           # noqa: E402
 from core.probes          import run_decode_probe, run_temporal_probe  # noqa: E402
 from core.gates           import evaluate_gates            # noqa: E402
 from core.regenerator     import regeneration_loop, PipelineEscalationError  # noqa: E402
 from core.post_processor  import run_post_processing       # noqa: E402
 from core.metadata_assembler import run_metadata_assembly  # noqa: E402
+
+
+# ── LUT / lower-third inference helpers ───────────────────────────────────────
+
+_LUT_MAP: dict = {
+    "Cool":    "cool_authority",
+    "Neutral": "neutral",
+    "Warm":    "warm_tension",
+}
+
+_LOWER_THIRD_MAP: dict = {
+    "Serious":   "minimal_dark_bar",
+    "Tense":     "high_contrast_black",
+    "Neutral":   "minimal_dark_bar",
+    "Calm":      "minimal_dark_bar",
+    "Uplifting": "warm_lower_bar",
+}
+
+
+def _infer_lut(color_temperature: str) -> str:
+    return _LUT_MAP.get(color_temperature, "neutral")
+
+
+def _infer_lower_third(mood: str) -> str:
+    return _LOWER_THIRD_MAP.get(mood, "minimal_dark_bar")
 
 
 # ── _init_run_state() ──────────────────────────────────────────────────────────
@@ -138,10 +165,22 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
         _set_stage(run_id, "prompt_compilation", "running")
         _current_stage = "prompt_compilation"
 
-        compiled = compile_prompts(user_input, compiler_version="1.0.0")
-
+        if user_input.get("mode") == "i2v":
+            compiled = user_input
+        else:
+            raw_prompt = user_input.get("raw_prompt", "")
+            result = compile_prompt_from_text(raw_prompt)
+            compiled = {
+                "positive":          result["positive_prompt"],
+                "motion":            result["motion_prompt"],
+                "negative":          FIXED_NEGATIVE_PROMPT,
+                "selected_lut":      _infer_lut(result["color_temperature"]),
+                "lower_third_style": _infer_lower_third(result["mood"]),
+                "input_hash_short":  hashlib.sha256(raw_prompt.encode()).hexdigest()[:6],
+                "compiler_version":  "2.0.0",
+                "user_input":        user_input,
+            }
         _set_stage(run_id, "prompt_compilation", "complete")
-
         # ── Stage 2: Generation + probes + gates (+ optional regen loop) ──────
         _set_stage(run_id, "generation", "running")
         _current_stage = "generation"
@@ -179,8 +218,8 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
                 "seam_frames_playable": gen_result["seam_frames_playable"],
                 "gate_result":          {"overall": "raw_verify", "failures": [],
                                          "human_flags": [], "gates_checked": 0},
-                "selected_lut":         compiled["selected_lut"],
-                "lower_third_style":    compiled["lower_third_style"],
+                "selected_lut":         compiled.get("selected_lut", "neutral"),
+                "lower_third_style":    compiled.get("lower_third_style", "minimal_dark_bar"),
                 "metadata_path":        "",
                 "stages":               RUN_REGISTRY[run_id]["stages"],
             }

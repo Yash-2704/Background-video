@@ -91,18 +91,15 @@ const mockMetadataFile = {
   post_processing:   { selected_lut: 'cool_authority', luts_generated: [], masks_generated: [] },
 }
 
-// Types a prompt, clicks Interpret, waits for Step 2, then clicks Confirm & Generate
+// Types a prompt and clicks Generate → (single-step flow)
 async function fillPromptForm(user, prompt = 'test prompt for app flow') {
   await user.type(screen.getByRole('textbox'), prompt)
-  await user.click(screen.getByRole('button', { name: /interpret/i }))
-  await screen.findByText('Interpreted as:')
-  await user.click(screen.getByRole('button', { name: /confirm/i }))
+  await user.click(screen.getByRole('button', { name: /generate/i }))
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()
-  parsePrompt.mockResolvedValue(mockParseResponse)
   compilePrompts.mockResolvedValue(mockCompileResponse)
   submitGeneration.mockResolvedValue(mockGenerateResponse)
   getRunStatus.mockResolvedValue(mockStatusResponse)
@@ -112,7 +109,7 @@ beforeEach(() => {
 it('1. App renders PromptForm on initial load', () => {
   render(<App />)
   expect(screen.getByRole('textbox')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /interpret/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /generate/i })).toBeInTheDocument()
 })
 
 it('2. RunMonitor is not visible on initial load', () => {
@@ -237,16 +234,15 @@ it('16. Clicking New Run returns to PromptForm and hides monitor', async () => {
   expect(screen.queryByRole('button', { name: /← new run/i })).not.toBeInTheDocument()
 })
 
-it('17. Inferred inputs appear in RunMonitor summary strip', async () => {
+it('17. RunMonitor summary strip is visible after compile', async () => {
   const user = userEvent.setup()
   render(<App />)
   await fillPromptForm(user)
-  expect(await screen.findByText('Economy')).toBeInTheDocument()
-  expect(screen.getByText('Urban')).toBeInTheDocument()
-  expect(screen.getByText('Dusk')).toBeInTheDocument()
-  expect(screen.getByText('Cool')).toBeInTheDocument()
-  expect(screen.getByText('Serious')).toBeInTheDocument()
-  expect(screen.getByText('Gentle')).toBeInTheDocument()
+  // run_id from compileResponse is visible in monitor
+  expect(await screen.findByText(/abc123/)).toBeInTheDocument()
+  // summary strip renders — 6 fields show dash placeholders since formData is { raw_prompt }
+  const dashes = screen.getAllByText('—')
+  expect(dashes.length).toBeGreaterThanOrEqual(6)
 })
 
 it('18. Same run_id appears in monitor and viewer headers', async () => {
@@ -258,16 +254,12 @@ it('18. Same run_id appears in monitor and viewer headers', async () => {
   expect(screen.getByText(/output bundle — abc123/i)).toBeInTheDocument()
 })
 
-it('19. compilePrompts rejection keeps app on PromptForm confirm step and shows error', async () => {
+it('19. compilePrompts rejection keeps app on PromptForm and shows error', async () => {
   compilePrompts.mockRejectedValueOnce(new Error('compile failed'))
   const user = userEvent.setup()
   render(<App />)
-  // Reach confirm step
   await user.type(screen.getByRole('textbox'), 'test prompt')
-  await user.click(screen.getByRole('button', { name: /interpret/i }))
-  await screen.findByText('Interpreted as:')
-  // Now confirm — this triggers the failing compilePrompts
-  await user.click(screen.getByRole('button', { name: /confirm/i }))
+  await user.click(screen.getByRole('button', { name: /generate/i }))
   expect(await screen.findByRole('alert')).toHaveTextContent('compile failed')
   expect(screen.queryByRole('button', { name: /← new run/i })).not.toBeInTheDocument()
 })

@@ -17,6 +17,7 @@ import pytest
 
 from core.generator import (
     GENERATION_CONSTANTS,
+    _letterbox_resize,
     crossfade_join,
     generate_clip,
     interpolate_clip,
@@ -379,5 +380,81 @@ def test_generate_clip_live_imageio_output_exists(tmp_path):
         clip_index=0,
         output_path=out,
         dry_run=False,
+    )
+    assert out.exists()
+
+
+# ── I2V mode tests ─────────────────────────────────────────────────────────────
+
+def test_i2v_mode_detected_and_t2v_loop_skipped(tmp_path):
+    """TEST F: i2v mode → generate_clip called with clip_index=1, clip_index=0 never called."""
+    from PIL import Image as _PIL
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    uploads_dir = output_dir / "uploads"
+    uploads_dir.mkdir()
+
+    image_id = "test123"
+    fake_img = _PIL.new("RGB", (800, 600), color=(100, 150, 200))
+    fake_img.save(str(uploads_dir / f"{image_id}.jpg"), format="JPEG")
+
+    i2v_compiled = {
+        "mode":              "i2v",
+        "image_id":          image_id,
+        "positive":          "test positive",
+        "motion":            "test motion",
+        "negative":          "test negative",
+        "input_hash_short":  "abc123",
+        "compiler_version":  "1.0.0",
+    }
+
+    with patch("core.generator.generate_clip") as mock_gc, \
+         patch("core.generator.shutil.copy2"):
+        run_generation(i2v_compiled, "run_i2v_f", output_dir, seed=42000, dry_run=True)
+
+    assert mock_gc.call_count == 1
+    args, kwargs = mock_gc.call_args
+    assert kwargs.get("clip_index") == 1
+
+    for call in mock_gc.call_args_list:
+        _, kw = call
+        assert kw.get("clip_index") != 0
+
+
+def test_letterbox_resize_produces_correct_output_size(tmp_path):
+    """TEST G: _letterbox_resize(800×600 image, 1280, 736) → (1280, 736) RGB image."""
+    from PIL import Image as _PIL
+
+    src = _PIL.new("RGB", (800, 600), color=(255, 0, 0))
+    result = _letterbox_resize(src, 1280, 736)
+    assert result.size == (1280, 736)
+    assert result.mode == "RGB"
+
+
+# ── I2V conditioning_frame type tests ─────────────────────────────────────────
+
+def test_generate_clip_i2v_accepts_pil_image(tmp_path):
+    """TEST A: dry_run I2V path must not crash when conditioning_frame is a PIL Image."""
+    import PIL.Image as _PIL
+    pil_img = _PIL.new("RGB", (1280, 736), color=(100, 150, 200))
+    out = tmp_path / "clip_pil.mp4"
+    generate_clip(
+        positive="test", motion="slow pan", negative="",
+        seed=42, clip_index=1, output_path=out,
+        dry_run=True, conditioning_frame=pil_img,
+    )
+    assert out.exists()
+
+
+def test_generate_clip_i2v_accepts_numpy_array(tmp_path):
+    """TEST B: dry_run I2V path must not crash when conditioning_frame is a numpy BGR array."""
+    import numpy as np
+    frame = np.full((736, 1280, 3), 128, dtype=np.uint8)
+    out = tmp_path / "clip_numpy.mp4"
+    generate_clip(
+        positive="test", motion="slow pan", negative="",
+        seed=42, clip_index=1, output_path=out,
+        dry_run=True, conditioning_frame=frame,
     )
     assert out.exists()

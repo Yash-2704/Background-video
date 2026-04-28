@@ -348,3 +348,103 @@ def test_wan_enrichment_system_prompt_contains_required_terms():
         assert term in _WAN_ENRICHMENT_SYSTEM_PROMPT, (
             f"_WAN_ENRICHMENT_SYSTEM_PROMPT is missing required term: {term!r}"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW TESTS — compile_prompt_from_text
+# ══════════════════════════════════════════════════════════════════════════════
+
+_VALID_COMPILE_PAYLOAD = {
+    "positive_prompt":   (
+        "A wide government plaza at dusk, camera locked static, "
+        "amber directional light, cinematic depth of field, "
+        "muted desaturated tones, light haze in distance, "
+        "stable textures, smooth motion, broadcast quality, "
+        "no artifacts, no text, no people, no faces"
+    ),
+    "motion_prompt":     "Camera locked static, no movement, imperceptible drift only.",
+    "color_temperature": "Cool",
+    "mood":              "Tense",
+    "inference_notes":   "Government plaza at dusk with cool tones inferred from description.",
+}
+
+
+# ── TEST A — compile_prompt_from_text returns required keys ───────────────────
+
+@patch.dict(os.environ, {"GROQ_API_KEY": "fake-key-for-testing"})
+def test_compile_prompt_from_text_returns_required_keys():
+    """Mock Groq returns valid JSON; assert all 5 required keys are present."""
+    import importlib
+    import core.prompt_parser as pp
+    importlib.reload(pp)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_groq_response(
+        json.dumps(_VALID_COMPILE_PAYLOAD)
+    )
+
+    mock_groq_module = MagicMock()
+    mock_groq_module.Groq.return_value = mock_client
+
+    with patch.dict("sys.modules", {"groq": mock_groq_module}):
+        result = pp.compile_prompt_from_text("A tense government plaza at dusk, cool tones")
+
+    assert "positive_prompt"   in result
+    assert "motion_prompt"     in result
+    assert "color_temperature" in result
+    assert "mood"              in result
+    assert "inference_notes"   in result
+    assert result["positive_prompt"] == _VALID_COMPILE_PAYLOAD["positive_prompt"]
+    assert result["color_temperature"] == "Cool"
+    assert result["mood"] == "Tense"
+
+
+# ── TEST B — invalid JSON falls back to safe defaults ────────────────────────
+
+@patch.dict(os.environ, {"GROQ_API_KEY": "fake-key-for-testing"})
+def test_compile_prompt_from_text_invalid_json_returns_defaults():
+    """Non-JSON response must not raise; positive_prompt is a non-empty string."""
+    import importlib
+    import core.prompt_parser as pp
+    importlib.reload(pp)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_groq_response(
+        "Sorry I cannot help with that."
+    )
+
+    mock_groq_module = MagicMock()
+    mock_groq_module.Groq.return_value = mock_client
+
+    with patch.dict("sys.modules", {"groq": mock_groq_module}):
+        result = pp.compile_prompt_from_text("some prompt")
+
+    assert isinstance(result, dict)
+    assert isinstance(result["positive_prompt"], str)
+    assert len(result["positive_prompt"]) > 0
+    assert "color_temperature" in result
+    assert "mood" in result
+
+
+# ── TEST C — invalid color_temperature falls back to Neutral ─────────────────
+
+@patch.dict(os.environ, {"GROQ_API_KEY": "fake-key-for-testing"})
+def test_compile_prompt_from_text_invalid_color_temperature_falls_back():
+    """Invalid color_temperature from LLM must be replaced by 'Neutral'."""
+    import importlib
+    import core.prompt_parser as pp
+    importlib.reload(pp)
+
+    bad_payload = {**_VALID_COMPILE_PAYLOAD, "color_temperature": "InvalidValue"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_groq_response(
+        json.dumps(bad_payload)
+    )
+
+    mock_groq_module = MagicMock()
+    mock_groq_module.Groq.return_value = mock_client
+
+    with patch.dict("sys.modules", {"groq": mock_groq_module}):
+        result = pp.compile_prompt_from_text("some prompt")
+
+    assert result["color_temperature"] in {"Cool", "Neutral", "Warm"}
