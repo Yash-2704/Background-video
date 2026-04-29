@@ -140,7 +140,7 @@ export async function uploadImage(file) {
 export async function submitAnimation(image_id, animation_prompt) {
   const run_id = Date.now().toString(36).slice(-6)
 
-  const compiled = {
+  return {
     mode: 'i2v',
     image_id,
     positive: animation_prompt,
@@ -152,7 +152,4 @@ export async function submitAnimation(image_id, animation_prompt) {
     compiler_version: '1.0.0',
     user_input: { mode: 'i2v', animation_prompt },
   }
-
-  const result = await submitGeneration({ run_id, compiled })
-  return { run_id, input_hash_short: run_id, ...result }
 }
