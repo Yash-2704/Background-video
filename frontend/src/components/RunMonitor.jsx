@@ -255,7 +255,12 @@ export default function RunMonitor({ compileResult, formData, onBack, onComplete
               <video
                 controls
                 loop
-                src={getMediaUrl(runResult.run_id, `bg_${runResult.run_id}_raw_loop.mp4`)}
+                src={getMediaUrl(
+                  runResult.run_id,
+                  runResult.upscaled_loop_path
+                    ? `${runResult.run_id}_1080p.mp4`
+                    : `bg_${runResult.run_id}_raw_loop.mp4`
+                )}
                 style={{ width: '100%', maxWidth: '720px', display: 'block' }}
               />
               <div className="result-row" style={{ marginTop: '0.5rem' }}>

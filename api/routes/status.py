@@ -91,6 +91,7 @@ def run_status_route(run_id: str) -> RunStatusResponse:
         # Spread result fields so the frontend can use the final data
         # without making a separate request after polling detects completion.
         raw_loop_path=result.get("raw_loop_path"),
+        upscaled_loop_path=result.get("upscaled_loop_path"),
         seed=result.get("seed"),
         seam_frames_raw=result.get("seam_frames_raw"),
         seam_frames_playable=result.get("seam_frames_playable"),

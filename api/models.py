@@ -115,6 +115,7 @@ class RunStatusResponse(BaseModel):
     error:                Optional[str] = None
     # Full result — present when status == "complete"
     raw_loop_path:        Optional[str] = None
+    upscaled_loop_path:   Optional[str] = None
     seed:                 Optional[int] = None
     seam_frames_raw:      Optional[list[int]] = None
     seam_frames_playable: Optional[list[int]] = None

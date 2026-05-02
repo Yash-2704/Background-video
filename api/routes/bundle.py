@@ -136,6 +136,7 @@ def _allowed_media_filenames(clip_id: str) -> dict:
         f"{clip_id}.mp4":              "video/mp4",
         f"{clip_id}_preview.gif":      "image/gif",
         f"bg_{clip_id}_raw_loop.mp4":  "video/mp4",
+        f"{clip_id}_1080p.mp4":        "video/mp4",
         f"{clip_id}.jpg":              "image/jpeg",
     }
 

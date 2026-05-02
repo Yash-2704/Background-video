@@ -66,7 +66,7 @@ from core.generator       import run_generation           # noqa: E402
 from core.probes          import run_decode_probe, run_temporal_probe  # noqa: E402
 from core.gates           import evaluate_gates            # noqa: E402
 from core.regenerator     import regeneration_loop, PipelineEscalationError  # noqa: E402
-from core.post_processor  import run_post_processing       # noqa: E402
+from core.post_processor  import run_post_processing, upscale_clip  # noqa: E402
 from core.metadata_assembler import run_metadata_assembly  # noqa: E402
 
 
@@ -205,6 +205,17 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
 
         # ── Raw-only early exit ───────────────────────────────────────────────
         if GENERATION_CONSTANTS.get("verify_raw_only", False):
+            _set_stage(run_id, "upscale", "running")
+            _current_stage = "upscale"
+            upscale_dir = OUTPUT_DIR / run_id / "raw"
+            upscale_dir.mkdir(parents=True, exist_ok=True)
+            upscaled_path = upscale_dir / f"{run_id}_1080p.mp4"
+            upscale_clip(
+                Path(gen_result["raw_loop_path"]),
+                upscaled_path,
+                decode_probe,
+                dry_run=False,
+            )
             for _stage in ["generation", "probe_temporal", "gate_evaluation",
                            "upscale", "mask_generation", "lut_grading",
                            "composite", "preview_export", "metadata_assembly"]:
@@ -213,6 +224,7 @@ def run_pipeline(run_id: str, user_input: dict) -> dict:
                 "run_id":               run_id,
                 "status":               "complete",
                 "raw_loop_path":        gen_result["raw_loop_path"],
+                "upscaled_loop_path":   str(upscaled_path),
                 "seed":                 gen_result["seed"],
                 "seam_frames_raw":      gen_result["seam_frames_raw"],
                 "seam_frames_playable": gen_result["seam_frames_playable"],

@@ -136,9 +136,9 @@ def upscale_clip(
 
         # Build filter chain: scale always; eq only when calibration needed
         vf = f"scale={target_w}:{target_h}:flags=lanczos"
-        if abs(lum_factor - 1.0) >= 1e-9:
-            brightness = lum_factor - 1.0
-            vf += f",eq=brightness={brightness:.4f}"
+        # if abs(lum_factor - 1.0) >= 1e-9:
+        #     brightness = lum_factor - 1.0
+        #     vf += f",eq=brightness={brightness:.4f}"
 
         proc = subprocess.run(
             [

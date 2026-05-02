@@ -520,4 +520,26 @@ describe('Raw verify mode', () => {
     const allMatches = screen.getAllByText('42819')
     expect(allMatches.length).toBeGreaterThan(0)
   })
+
+  it('G. video src uses 1080p filename when upscaled_loop_path is present', async () => {
+    const result = { ...mockRawVerifyResult, upscaled_loop_path: 'output/bg_001_b2e7f3/raw/bg_001_b2e7f3_1080p.mp4' }
+    await renderAndPoll(result)
+    const video = document.querySelector('video')
+    expect(video.getAttribute('src')).toContain('_1080p.mp4')
+    expect(video.getAttribute('src')).not.toContain('raw_loop')
+  })
+
+  it('H. video src falls back to raw loop when upscaled_loop_path is null', async () => {
+    const result = { ...mockRawVerifyResult, upscaled_loop_path: null }
+    await renderAndPoll(result)
+    const video = document.querySelector('video')
+    expect(video.getAttribute('src')).toContain('raw_loop')
+    expect(video.getAttribute('src')).not.toContain('1080p')
+  })
+
+  it('I. video src falls back to raw loop when upscaled_loop_path is absent', async () => {
+    await renderAndPoll(mockRawVerifyResult)
+    const video = document.querySelector('video')
+    expect(video.getAttribute('src')).toContain('raw_loop')
+  })
 })
